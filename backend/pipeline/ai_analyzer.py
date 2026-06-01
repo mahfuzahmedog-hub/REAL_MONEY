@@ -1,6 +1,6 @@
 import os
 import json
-import time
+import re
 from groq import Groq
 
 _client = None
@@ -9,8 +9,8 @@ def get_client():
     global _client
     if _client is None:
         api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY not set")
+        if not api_key or api_key == "your_new_groq_api_key_here":
+            raise ValueError("GROQ_API_KEY not set. Edit backend/.env with your key.")
         _client = Groq(api_key=api_key)
     return _client
 
@@ -22,11 +22,14 @@ def analyze_transcript(transcript: list, duration: float) -> list:
         for s in transcript
     )
 
-    prompt = f"""You are a viral shorts analyst. Given a transcript with timestamps from a {duration:.0f}-second video, find the best viral-worthy clips (15-40 seconds each). The number of clips depends on the content quality — return as many as you find worthy (minimum 1, maximum 5).
+    if not segments_text.strip():
+        raise ValueError("Empty transcript — nothing to analyze")
 
-For each clip, score 0-100 based on: hook moments, emotional peaks, opinion bombs, revelations, conflict, quotable lines, story peaks, and practical value.
+    prompt = f"""You are a viral shorts analyst. Given a transcript with timestamps from a {duration:.0f}-second video, find the best viral-worthy clips (15-40 seconds each). The number of clips depends on content quality — return minimum 1, maximum 5.
 
-Return ONLY valid JSON array. No markdown, no code fences:
+For each clip, score 0-100 based on: hook moments, emotional peaks, strong opinions, revelations, conflict, quotable lines, story peaks, and practical value.
+
+Return ONLY valid JSON. No markdown, no code fences, no extra text:
 [{{"start": float, "end": float, "score": int, "reason": str, "mood": "chill"|"hype"|"emotional"|"funny"|"serious"}}]
 
 Transcript:
@@ -40,14 +43,23 @@ Transcript:
     )
 
     content = response.choices[0].message.content.strip()
-    content = content.replace("```json", "").replace("```", "").strip()
+    content = re.sub(r"^```(?:json)?\s*", "", content)
+    content = re.sub(r"\s*```$", "", content)
+    content = content.strip()
+
+    if not content:
+        raise ValueError("AI returned empty response")
 
     clips = json.loads(content)
+    if not isinstance(clips, list):
+        raise ValueError("AI response was not a list")
+
     for c in clips:
-        c["start"] = float(c["start"])
-        c["end"] = float(c["end"])
-        c["score"] = int(c["score"])
+        c["start"] = max(0.0, float(c.get("start", 0)))
+        c["end"] = float(c.get("end", 0))
+        c["score"] = int(c.get("score", 0))
+        c["mood"] = c.get("mood", "chill")
+        c["reason"] = c.get("reason", "Viral moment")
 
     clips.sort(key=lambda x: x["score"], reverse=True)
-
     return clips

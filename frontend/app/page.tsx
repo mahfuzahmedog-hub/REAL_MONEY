@@ -12,6 +12,7 @@ const MOOD_EMOJIS: Record<string, string> = {
 }
 
 const STAGE_LABELS: Record<string, string> = {
+  validating: "Checking URL...",
   downloading: "Downloading video...",
   transcribing: "Transcribing audio...",
   analyzing: "AI analyzing best moments...",
@@ -27,21 +28,38 @@ export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  const pollStatus = useCallback(async (id: string) => {
-    const status = await getJobStatus(id)
-    setJobStatus(status)
-
-    if (status.done || status.error) {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      setLoading(false)
+  const stopPolling = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
     }
   }, [])
+
+  const pollStatus = useCallback(async (id: string) => {
+    try {
+      const status = await getJobStatus(id)
+      setJobStatus(status)
+      if (status.done || status.error) {
+        stopPolling()
+        setLoading(false)
+      }
+    } catch {
+      stopPolling()
+      setLoading(false)
+      setJobStatus({
+        progress: 0,
+        stage: "error",
+        clips: [],
+        error: "Lost connection to backend. Make sure it's running on port 8000.",
+        download_path: null,
+        done: false,
+      })
+    }
+  }, [stopPolling])
 
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [])
+    return () => stopPolling()
+  }, [stopPolling])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,23 +73,32 @@ export default function Home() {
       const id = await startProcessing(url.trim())
       setJobId(id)
       intervalRef.current = setInterval(() => pollStatus(id), 2000)
-    } catch (err) {
+    } catch (err: any) {
       setLoading(false)
+      const msg = err.message || "Failed to start. Is the backend running on port 8000?"
       setJobStatus({
         progress: 0,
         stage: "error",
         clips: [],
-        error: "Failed to start. Is the backend running?",
+        error: msg,
         download_path: null,
         done: false,
       })
     }
   }
 
+  const handleReset = () => {
+    stopPolling()
+    setLoading(false)
+    setJobStatus(null)
+    setJobId(null)
+  }
+
   const progress = jobStatus?.progress ?? 0
   const stage = jobStatus?.stage ?? "idle"
   const clips = jobStatus?.clips ?? []
   const error = jobStatus?.error
+  const isDone = jobStatus?.done
 
   const moodColor = (mood: string) => {
     const colors: Record<string, string> = {
@@ -199,11 +226,25 @@ export default function Home() {
           marginBottom: "24px",
           fontSize: "0.9rem",
         }}>
-          {error}
+          <div style={{ marginBottom: "12px" }}>{error}</div>
+          <button
+            onClick={handleReset}
+            style={{
+              padding: "8px 20px",
+              borderRadius: "8px",
+              border: "1px solid #3a1a1a",
+              background: "transparent",
+              color: "#ff6b6b",
+              cursor: "pointer",
+              fontSize: "0.85rem",
+            }}
+          >
+            Try another video
+          </button>
         </div>
       )}
 
-      {clips.length > 0 && (
+      {isDone && clips.length > 0 && (
         <div>
           <div style={{
             display: "flex",
@@ -214,23 +255,39 @@ export default function Home() {
             <h2 style={{ color: "#e0e0e0", fontSize: "1.1rem", fontWeight: 600 }}>
               {clips.length} clip{clips.length > 1 ? "s" : ""} ready
             </h2>
-            <a
-              href={getDownloadUrl(jobId!)}
-              download
-              style={{
-                padding: "10px 24px",
-                borderRadius: "10px",
-                border: "none",
-                background: "linear-gradient(135deg, #00c853, #00a844)",
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: "0.85rem",
-                textDecoration: "none",
-                cursor: "pointer",
-              }}
-            >
-              Download All (ZIP)
-            </a>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <a
+                href={getDownloadUrl(jobId!)}
+                download
+                style={{
+                  padding: "10px 24px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "linear-gradient(135deg, #00c853, #00a844)",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: "0.85rem",
+                  textDecoration: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Download ZIP
+              </a>
+              <button
+                onClick={handleReset}
+                style={{
+                  padding: "10px 20px",
+                  borderRadius: "10px",
+                  border: "1px solid #2a2a3a",
+                  background: "transparent",
+                  color: "#888",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                }}
+              >
+                New video
+              </button>
+            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
