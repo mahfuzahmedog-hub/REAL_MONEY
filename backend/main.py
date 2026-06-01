@@ -11,6 +11,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, cleanup_old_outputs, OUTPUT_DIR
+from pipeline.music import get_track_counts
 
 app = FastAPI(title="REAL MONEY")
 
@@ -31,7 +32,11 @@ class ProcessRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "groq_configured": os.getenv("GROQ_API_KEY") not in (None, "", "your_new_groq_api_key_here")}
+    return {
+        "status": "ok",
+        "groq_configured": os.getenv("GROQ_API_KEY") not in (None, "", "your_new_groq_api_key_here"),
+        "music_tracks": get_track_counts()
+    }
 
 @app.post("/process")
 async def process_video(req: ProcessRequest):

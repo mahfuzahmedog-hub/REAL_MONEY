@@ -47,6 +47,8 @@ def get_status(job_id: str) -> dict:
     return s.to_dict()
 
 def cleanup_old_outputs():
+    if not OUTPUT_DIR.exists():
+        return
     cutoff = time.time() - STATUS_TTL_SEC
     for p in OUTPUT_DIR.iterdir():
         if p.is_dir() and p.stat().st_mtime < cutoff:
@@ -160,6 +162,9 @@ async def run_pipeline(url: str, job_id: str):
         s.error = str(e)
         s.stage = "error"
         s.progress = 0
+        error_dir = OUTPUT_DIR / job_id
+        if error_dir.exists():
+            shutil.rmtree(error_dir, ignore_errors=True)
     finally:
         downloader.cleanup_job_files(raw_paths)
         _active_job_count -= 1

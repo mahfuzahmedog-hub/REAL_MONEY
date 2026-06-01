@@ -20,6 +20,10 @@ def scan_tracks():
             for ext in ("*.mp3", "*.wav", "*.ogg", "*.m4a"):
                 MOOD_TRACKS[mood].extend(str(f) for f in mood_dir.glob(ext))
 
+def get_track_counts() -> dict:
+    scan_tracks()
+    return {mood: len(tracks) for mood, tracks in MOOD_TRACKS.items()}
+
 def pick_track(mood: str):
     scan_tracks()
     tracks = MOOD_TRACKS.get(mood, [])

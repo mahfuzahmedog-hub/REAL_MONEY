@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { startProcessing, getJobStatus, getDownloadUrl, type ClipResult, type JobStatus } from "../lib/api"
+import { startProcessing, getJobStatus, getDownloadUrl, checkHealth, triggerDownload, type ClipResult, type JobStatus, type HealthStatus } from "../lib/api"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -28,7 +28,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [health, setHealth] = useState<HealthStatus | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    checkHealth().then(setHealth).catch(() => setHealth(null))
+  }, [])
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -96,6 +101,10 @@ export default function Home() {
     setJobId(null)
   }
 
+  const handleDownload = () => {
+    triggerDownload(getDownloadUrl(jobId!), `realmoney_${jobId}.zip`)
+  }
+
   const progress = jobStatus?.progress ?? 0
   const stage = jobStatus?.stage ?? "idle"
   const clips = jobStatus?.clips ?? []
@@ -103,7 +112,6 @@ export default function Home() {
   const isDone = jobStatus?.done
 
   const getClipUrl = (jobId: string, index: number) => `${API_BASE}/clip/${jobId}/${index}`
-  const handleDownload = () => { window.open(getDownloadUrl(jobId!), "_blank") }
 
   const moodColor = (mood: string) => {
     const colors: Record<string, string> = {
@@ -116,12 +124,61 @@ export default function Home() {
     return colors[mood] || "text-gray-400"
   }
 
+  const noGroq = health && !health.groq_configured
+  const noMusic = health && Object.values(health.music_tracks).every((c) => c === 0)
+  const backendOffline = health === null
+
   return (
     <main style={{
       maxWidth: "720px",
       margin: "0 auto",
       padding: "40px 20px",
     }}>
+      {backendOffline && (
+        <div style={{
+          background: "#1a0a0a",
+          border: "1px solid #3a1a1a",
+          borderRadius: "12px",
+          padding: "12px 16px",
+          color: "#ff6b6b",
+          marginBottom: "20px",
+          fontSize: "0.85rem",
+          textAlign: "center",
+        }}>
+          Backend offline — start the Python server on port 8000
+        </div>
+      )}
+
+      {noGroq && (
+        <div style={{
+          background: "#1a1a0a",
+          border: "1px solid #3a3a1a",
+          borderRadius: "12px",
+          padding: "12px 16px",
+          color: "#d4a853",
+          marginBottom: "20px",
+          fontSize: "0.85rem",
+          textAlign: "center",
+        }}>
+          Groq API key not set — edit backend/.env and restart the server
+        </div>
+      )}
+
+      {noMusic && !noGroq && !backendOffline && (
+        <div style={{
+          background: "#0a1a1a",
+          border: "1px solid #1a3a3a",
+          borderRadius: "12px",
+          padding: "12px 16px",
+          color: "#00c853",
+          marginBottom: "20px",
+          fontSize: "0.85rem",
+          textAlign: "center",
+        }}>
+          No music tracks found — run backend/download_music.ps1 or add .mp3 files
+        </div>
+      )}
+
       <div style={{ textAlign: "center", marginBottom: "40px" }}>
         <h1 style={{
           fontSize: "2.5rem",

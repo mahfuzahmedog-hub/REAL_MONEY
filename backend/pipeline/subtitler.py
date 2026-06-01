@@ -42,7 +42,7 @@ def burn_subtitles(video_path: str, transcript: list,
     srt_filter_path = str(srt_path).replace("\\", "/").replace(":", "\\:")
     result = subprocess.run([
         "ffmpeg", "-i", video_path,
-        "-vf", f"subtitles={srt_filter_path}:force_style='FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,MarginV=40'",
+        "-vf", f"subtitles={srt_filter_path}:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=60'",
         "-c:a", "copy", output_path, "-y"
     ], capture_output=True, text=True)
     if result.returncode != 0:
