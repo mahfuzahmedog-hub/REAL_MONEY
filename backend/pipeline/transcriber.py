@@ -6,7 +6,7 @@ _model = None
 def get_model():
     global _model
     if _model is None:
-        _model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        _model = WhisperModel("base", device="cpu", compute_type="int8")
     return _model
 
 def transcribe(audio_path: str) -> list:
@@ -18,7 +18,7 @@ def transcribe(audio_path: str) -> list:
         raise ValueError("Audio file is empty")
 
     model = get_model()
-    segments, _ = model.transcribe(audio_path, beam_size=1, vad_filter=False)
+    segments, _ = model.transcribe(audio_path, beam_size=1, vad_filter=True)
 
     result = []
     for seg in segments:
@@ -29,6 +29,6 @@ def transcribe(audio_path: str) -> list:
         })
 
     if not result:
-        raise ValueError("No speech detected in audio")
+        return []
 
     return result

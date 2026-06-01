@@ -34,6 +34,7 @@ const STAGE_LABELS: Record<string, string> = {
 
 export default function Home() {
   const [url, setUrl] = useState("")
+  const [niche, setNiche] = useState("general")
   const [loading, setLoading] = useState(false)
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
@@ -88,7 +89,7 @@ export default function Home() {
     setJobId(null)
 
     try {
-      const id = await startProcessing(url.trim())
+      const id = await startProcessing(url.trim(), niche)
       setJobId(id)
       intervalRef.current = setInterval(() => pollStatus(id), 2000)
     } catch (err: any) {
@@ -221,6 +222,7 @@ export default function Home() {
           border: "1px solid #2a2a3a",
           borderRadius: "12px",
           padding: "4px",
+          marginBottom: "8px",
         }}>
           <input
             type="url"
@@ -256,6 +258,40 @@ export default function Home() {
           >
             {loading ? "Processing..." : "Generate"}
           </button>
+        </div>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}>
+          <label style={{ color: "#888", fontSize: "0.85rem" }}>Niche:</label>
+          <select
+            value={niche}
+            onChange={(e) => setNiche(e.target.value)}
+            disabled={loading}
+            style={{
+              flex: 1,
+              background: "#121212",
+              border: "1px solid #2a2a3a",
+              borderRadius: "8px",
+              padding: "8px 12px",
+              color: "#e0e0e0",
+              fontSize: "0.85rem",
+              outline: "none",
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+          >
+            <option value="general">General</option>
+            <option value="gaming">Gaming</option>
+            <option value="music">Music</option>
+            <option value="finance">Finance</option>
+            <option value="fitness">Fitness</option>
+            <option value="education">Education</option>
+            <option value="comedy">Comedy</option>
+            <option value="news">News</option>
+            <option value="sports">Sports</option>
+            <option value="food">Food</option>
+          </select>
         </div>
       </form>
 

@@ -42,11 +42,11 @@ export async function checkHealth(): Promise<HealthStatus> {
   return res.json()
 }
 
-export async function startProcessing(url: string): Promise<string> {
+export async function startProcessing(url: string, niche: string = "general"): Promise<string> {
   const res = await fetch(`${API_BASE}/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, niche }),
   })
   if (!res.ok) {
     let msg = "Failed to start processing"

@@ -29,6 +29,16 @@ def _rms(samples: np.ndarray) -> float:
         return 0.0
     return float(np.sqrt(np.mean(samples ** 2)))
 
+def _detect_mood_from_energy(avg_energy: float, peak_energy: float) -> str:
+    if avg_energy > 0.15 or peak_energy > 0.4:
+        return "hype"
+    elif avg_energy > 0.08 or peak_energy > 0.2:
+        return "emotional"
+    elif avg_energy > 0.04:
+        return "chill"
+    else:
+        return "serious"
+
 def score_clip_energy(audio_path: str, start: float, end: float) -> float:
     samples = _load_audio(audio_path)
     total_duration = len(samples) / SAMPLE_RATE
@@ -97,7 +107,8 @@ def detect_energy_clips(audio_path: str, duration: float) -> list:
                 "duration": round(clip_duration, 1),
                 "energy_score": round(total_score, 4),
                 "avg_energy": round(avg_energy, 4),
-                "peak_energy": round(peak_energy, 4)
+                "peak_energy": round(peak_energy, 4),
+                "mood": _detect_mood_from_energy(avg_energy, peak_energy)
             })
 
     candidates.sort(key=lambda x: x["energy_score"], reverse=True)

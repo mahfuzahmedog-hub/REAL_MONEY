@@ -401,7 +401,7 @@ def analyze_transcript_agent1(transcript: list, duration: float, niche: str = "g
     transcript_text = _format_transcript(transcript)
 
     if not transcript_text.strip():
-        raise ValueError("Empty transcript — nothing to analyze")
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
     user_message = f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}\n\nTRANSCRIPT:\n{transcript_text}"
 

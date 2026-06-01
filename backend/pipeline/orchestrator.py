@@ -87,11 +87,11 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "viral_score": round(ec["energy_score"] * 500, 1),
         "score_breakdown": {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0},
         "tier": "B",
-        "mood": "hype",
+        "mood": ec.get("mood", "hype"),
         "reason": f"Energy detection: avg={ec['avg_energy']:.3f}, peak={ec['peak_energy']:.3f}"
     }
 
-async def run_pipeline(url: str, job_id: str):
+async def run_pipeline(url: str, job_id: str, niche: str = "general"):
     global _active_job_count
 
     s = PipelineStatus()
@@ -137,7 +137,7 @@ async def run_pipeline(url: str, job_id: str):
 
         s.stage = "analyzing"
         s.progress = 50
-        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration)
+        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
         agent1_clips = agent1_result.get("clips", [])
         used_energy_fallback = False
 
@@ -163,7 +163,7 @@ async def run_pipeline(url: str, job_id: str):
                          "duration": c["duration"], "mood": c.get("mood", "hype")}
                         for c in agent1_clips]
         fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
-        agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, "general", fallback_mode)
+        agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche=niche, fallback_mode=fallback_mode)
         clips_meta = agent2_result.get("clips", [])
 
         metadata_lookup = {}

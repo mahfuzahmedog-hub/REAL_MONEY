@@ -29,6 +29,7 @@ app.add_middleware(
 
 class ProcessRequest(BaseModel):
     url: str
+    niche: str = "general"
 
 @app.get("/health")
 async def health():
@@ -43,7 +44,7 @@ async def process_video(req: ProcessRequest):
     if not req.url or not req.url.strip():
         raise HTTPException(400, "URL is required")
     job_id = uuid.uuid4().hex[:12]
-    asyncio.create_task(run_pipeline(req.url.strip(), job_id))
+    asyncio.create_task(run_pipeline(req.url.strip(), job_id, niche=req.niche))
     return {"job_id": job_id}
 
 @app.get("/status/{job_id}")
