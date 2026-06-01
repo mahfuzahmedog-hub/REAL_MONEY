@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env
+
+# Node
+node_modules/
+.next/
+out/
+
+# Video processing
+*.mp4
+*.wav
+*.zip
+backend/output/
+
+# OS
+.DS_Store
+Thumbs.db
