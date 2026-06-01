@@ -36,8 +36,6 @@ def mix_music(video_path: str, mood: str) -> str:
         return video_path
 
     output_path = video_path.replace(".mp4", "_music.mp4")
-    v_p = video_path.replace(":", "\\:").replace("'", "'\\''")
-    t_p = track.replace(":", "\\:").replace("'", "'\\''")
 
     result = subprocess.run([
         "ffmpeg", "-i", video_path, "-i", track,

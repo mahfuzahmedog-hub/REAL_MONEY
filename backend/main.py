@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from pipeline.orchestrator import run_pipeline, get_status, OUTPUT_DIR
+from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, OUTPUT_DIR
 
 app = FastAPI(title="REAL MONEY")
 
@@ -41,6 +41,20 @@ async def process_video(req: ProcessRequest):
 @app.get("/status/{job_id}")
 async def get_job_status(job_id: str):
     return get_status(job_id)
+
+@app.get("/clip/{job_id}/{index}")
+async def serve_clip(job_id: str, index: int):
+    status = get_status(job_id)
+    if not status.get("done"):
+        raise HTTPException(400, "Processing not complete yet")
+    clip_path = get_clip_path(job_id, index)
+    if not clip_path or not Path(clip_path).exists():
+        raise HTTPException(404, "Clip not found")
+    return FileResponse(
+        clip_path,
+        media_type="video/mp4",
+        headers={"Accept-Ranges": "bytes"}
+    )
 
 @app.get("/download/{job_id}")
 async def download_results(job_id: str):

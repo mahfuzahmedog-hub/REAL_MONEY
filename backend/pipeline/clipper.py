@@ -64,7 +64,7 @@ def cut_and_crop_clip(video_path: str, job_id: str, clip_index: int,
 
     result = subprocess.run([
         "ffmpeg", "-i", str(temp_path),
-        "-vf", f"crop={crop_w}:{crop_h}:{crop_x}:0,scale=608:1080",
+        "-vf", f"crop={crop_w}:{crop_h}:{crop_x}:0,scale=1080:1920:flags=lanczos",
         "-c:a", "aac", "-b:a", "128k",
         str(output_path), "-y"
     ], capture_output=True, text=True)

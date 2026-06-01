@@ -52,7 +52,7 @@ def get_video_duration(video_path: str) -> float:
         raise RuntimeError(f"ffprobe failed: {result.stderr[:200]}")
     return float(result.stdout.strip())
 
-def cleanup_job_files(job_id: str, paths: list):
+def cleanup_job_files(paths: list):
     for p in paths:
         try:
             Path(p).unlink(missing_ok=True)

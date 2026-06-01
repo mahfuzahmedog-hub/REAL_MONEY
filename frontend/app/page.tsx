@@ -3,6 +3,8 @@
 import { useState, useCallback, useRef, useEffect } from "react"
 import { startProcessing, getJobStatus, getDownloadUrl, type ClipResult, type JobStatus } from "../lib/api"
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+
 const MOOD_EMOJIS: Record<string, string> = {
   hype: "\u26A1",
   chill: "\uD83C\uDF43",
@@ -99,6 +101,8 @@ export default function Home() {
   const clips = jobStatus?.clips ?? []
   const error = jobStatus?.error
   const isDone = jobStatus?.done
+
+  const getClipUrl = (jobId: string, index: number) => `${API_BASE}/clip/${jobId}/${index}`
 
   const moodColor = (mood: string) => {
     const colors: Record<string, string> = {
@@ -211,8 +215,16 @@ export default function Home() {
               background: "linear-gradient(90deg, #d4a853, #f5d78e)",
               borderRadius: "3px",
               transition: "width 0.5s ease",
+              boxShadow: progress > 0 && progress < 100 ? "0 0 8px rgba(212, 168, 83, 0.4)" : "none",
             }} />
           </div>
+          {progress < 100 && (
+            <div className="shimmer" style={{
+              height: "2px",
+              borderRadius: "1px",
+              marginTop: "8px",
+            }} />
+          )}
         </div>
       )}
 
@@ -296,49 +308,62 @@ export default function Home() {
                 background: "#121212",
                 border: "1px solid #2a2a3a",
                 borderRadius: "12px",
-                padding: "16px",
+                overflow: "hidden",
               }}>
-                <div style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: "8px",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "50%",
-                      background: "#d4a853",
-                      color: "#0a0a0a",
-                      fontWeight: 700,
-                      fontSize: "0.8rem",
-                    }}>
-                      {clip.index}
-                    </span>
-                    <span className={moodColor(clip.mood)}>
-                      {MOOD_EMOJIS[clip.mood] || ""} {clip.mood}
-                    </span>
+                <video
+                  src={getClipUrl(jobId!, clip.index)}
+                  controls
+                  preload="metadata"
+                  style={{
+                    width: "100%",
+                    maxHeight: "400px",
+                    display: "block",
+                    background: "#000",
+                  }}
+                />
+                <div style={{ padding: "16px" }}>
+                  <div style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: "8px",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "50%",
+                        background: "#d4a853",
+                        color: "#0a0a0a",
+                        fontWeight: 700,
+                        fontSize: "0.8rem",
+                      }}>
+                        {clip.index}
+                      </span>
+                      <span className={moodColor(clip.mood)}>
+                        {MOOD_EMOJIS[clip.mood] || ""} {clip.mood}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                      <span style={{ color: "#888", fontSize: "0.85rem" }}>
+                        {clip.duration}s
+                      </span>
+                      <span style={{
+                        color: clip.score >= 80 ? "#00c853" : clip.score >= 60 ? "#d4a853" : "#888",
+                        fontWeight: 700,
+                        fontSize: "0.9rem",
+                      }}>
+                        {clip.score}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                    <span style={{ color: "#888", fontSize: "0.85rem" }}>
-                      {clip.duration}s
-                    </span>
-                    <span style={{
-                      color: clip.score >= 80 ? "#00c853" : clip.score >= 60 ? "#d4a853" : "#888",
-                      fontWeight: 700,
-                      fontSize: "0.9rem",
-                    }}>
-                      {clip.score}
-                    </span>
-                  </div>
+                  <p style={{ color: "#aaa", fontSize: "0.85rem", lineHeight: 1.4 }}>
+                    {clip.reason}
+                  </p>
                 </div>
-                <p style={{ color: "#aaa", fontSize: "0.85rem", lineHeight: 1.4 }}>
-                  {clip.reason}
-                </p>
               </div>
             ))}
           </div>

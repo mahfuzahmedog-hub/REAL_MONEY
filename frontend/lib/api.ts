@@ -25,7 +25,11 @@ export async function startProcessing(url: string): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   })
-  if (!res.ok) throw new Error("Failed to start processing")
+  if (!res.ok) {
+    let msg = "Failed to start processing"
+    try { const body = await res.json(); if (body.detail) msg = body.detail } catch {}
+    throw new Error(msg)
+  }
   const data = await res.json()
   return data.job_id
 }
