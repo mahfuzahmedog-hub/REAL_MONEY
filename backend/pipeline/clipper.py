@@ -2,6 +2,7 @@ import subprocess
 import cv2
 import numpy as np
 from pathlib import Path
+from .config import FFMPEG
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
@@ -51,7 +52,7 @@ def cut_and_crop_clip(video_path: str, job_id: str, clip_index: int,
         raise ValueError(f"Clip too short: {duration}s")
 
     result = subprocess.run([
-        "ffmpeg", "-ss", str(start), "-i", video_path,
+        FFMPEG, "-ss", str(start), "-i", video_path,
         "-t", str(duration),
         "-c:v", "libx264", "-preset", "fast", "-crf", "22",
         "-c:a", "aac", "-b:a", "128k",
@@ -63,7 +64,7 @@ def cut_and_crop_clip(video_path: str, job_id: str, clip_index: int,
     crop_x, crop_w, crop_h = detect_smart_crop(str(temp_path))
 
     result = subprocess.run([
-        "ffmpeg", "-i", str(temp_path),
+        FFMPEG, "-i", str(temp_path),
         "-vf", f"crop={crop_w}:{crop_h}:{crop_x}:0,scale=1080:1920:flags=lanczos",
         "-c:a", "aac", "-b:a", "128k",
         str(output_path), "-y"

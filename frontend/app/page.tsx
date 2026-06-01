@@ -13,6 +13,14 @@ const MOOD_EMOJIS: Record<string, string> = {
   serious: "\uD83D\uDCA1",
 }
 
+const SIGNAL_EMOJIS: Record<string, string> = {
+  "SHARE BAIT": "\uD83D\uDCE3",
+  "SAVE BAIT": "\uD83D\uDCCB",
+  "COMMENT BAIT": "\uD83D\uDCAC",
+  "COMPLETION BAIT": "\uD83D\uDC40",
+  "LOOP BAIT": "\uD83D\uDD01",
+}
+
 const STAGE_LABELS: Record<string, string> = {
   validating: "Checking URL...",
   downloading: "Downloading video...",
@@ -30,6 +38,7 @@ export default function Home() {
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [health, setHealth] = useState<HealthStatus | null>(null)
+  const [activePlatforms, setActivePlatforms] = useState<Record<number, string>>({})
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
@@ -398,6 +407,13 @@ export default function Home() {
                 borderRadius: "12px",
                 overflow: "hidden",
               }}>
+                {clip.title && (
+                  <div style={{ padding: "16px 16px 0 16px" }}>
+                    <h3 style={{ color: "#e0e0e0", fontSize: "1rem", fontWeight: 700, margin: 0 }}>
+                      {clip.title}
+                    </h3>
+                  </div>
+                )}
                 <video
                   src={getClipUrl(jobId!, clip.index)}
                   controls
@@ -407,16 +423,32 @@ export default function Home() {
                     maxHeight: "400px",
                     display: "block",
                     background: "#000",
+                    marginTop: "8px",
                   }}
                 />
                 <div style={{ padding: "16px" }}>
+                  {clip.hook_text && (
+                    <div style={{
+                      background: "#1a1a0a",
+                      borderLeft: "3px solid #d4a853",
+                      padding: "8px 12px",
+                      marginBottom: "12px",
+                      borderRadius: "0 6px 6px 0",
+                    }}>
+                      <p style={{ color: "#f5d78e", fontSize: "0.95rem", fontWeight: 600, margin: 0, fontStyle: "italic" }}>
+                        "{clip.hook_text}"
+                      </p>
+                    </div>
+                  )}
                   <div style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "flex-start",
                     marginBottom: "8px",
+                    flexWrap: "wrap",
+                    gap: "6px",
                   }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                       <span style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -434,6 +466,31 @@ export default function Home() {
                       <span className={moodColor(clip.mood)}>
                         {MOOD_EMOJIS[clip.mood] || ""} {clip.mood}
                       </span>
+                      {clip.primary_signal && (
+                        <span style={{
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          background: "#2a2a1a",
+                          color: "#d4a853",
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                          letterSpacing: "0.5px",
+                        }}>
+                          {SIGNAL_EMOJIS[clip.primary_signal] || ""} {clip.primary_signal}
+                        </span>
+                      )}
+                      {clip.fallback_mode && (
+                        <span style={{
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                          background: "#2a1a1a",
+                          color: "#ff6b6b",
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                        }}>
+                          ENERGY DETECTED
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
                       <span style={{ color: "#888", fontSize: "0.85rem" }}>
@@ -448,9 +505,85 @@ export default function Home() {
                       </span>
                     </div>
                   </div>
-                  <p style={{ color: "#aaa", fontSize: "0.85rem", lineHeight: 1.4 }}>
+                  <p style={{ color: "#aaa", fontSize: "0.85rem", lineHeight: 1.4, marginBottom: "8px" }}>
                     {clip.reason}
                   </p>
+                  {clip.tags && clip.tags.length > 0 && (
+                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "12px" }}>
+                      {clip.tags.map((tag, ti) => (
+                        <span key={ti} style={{
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          background: "#1a1a2a",
+                          color: "#888",
+                          fontSize: "0.7rem",
+                        }}>
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {(clip.caption_instagram || clip.caption_tiktok || clip.caption_youtube) && (() => {
+                    const platforms = [
+                      { key: "instagram", label: "Instagram", text: clip.caption_instagram },
+                      { key: "tiktok", label: "TikTok", text: clip.caption_tiktok },
+                      { key: "youtube", label: "YouTube", text: clip.caption_youtube },
+                    ].filter(p => p.text)
+                    const activeKey = activePlatforms[clip.index] || "instagram"
+                    const active = platforms.find(p => p.key === activeKey) || platforms[0]
+                    return (
+                      <div>
+                        <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
+                          {platforms.map(p => (
+                            <button
+                              key={p.key}
+                              onClick={() => setActivePlatforms(prev => ({ ...prev, [clip.index]: p.key }))}
+                              style={{
+                                padding: "4px 12px",
+                                borderRadius: "6px",
+                                border: "none",
+                                background: p.key === activeKey ? "#d4a853" : "#2a2a3a",
+                                color: p.key === activeKey ? "#0a0a0a" : "#888",
+                                fontWeight: 600,
+                                fontSize: "0.75rem",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{
+                          background: "#0a0a0a",
+                          border: "1px solid #2a2a3a",
+                          borderRadius: "8px",
+                          padding: "10px 12px",
+                          position: "relative",
+                        }}>
+                          <p style={{ color: "#ccc", fontSize: "0.8rem", lineHeight: 1.5, margin: 0, whiteSpace: "pre-wrap" }}>
+                            {active.text}
+                          </p>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(active.text)}
+                            style={{
+                              position: "absolute",
+                              top: "6px",
+                              right: "6px",
+                              padding: "3px 8px",
+                              borderRadius: "4px",
+                              border: "1px solid #2a2a3a",
+                              background: "#121212",
+                              color: "#888",
+                              fontSize: "0.7rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             ))}

@@ -1,6 +1,7 @@
 import subprocess
 import re
 from pathlib import Path
+from .config import YT_DLP, FFMPEG, FFPROBE, DENO
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 VIDEO_REGEX = re.compile(
@@ -15,32 +16,40 @@ def ensure_output_dir():
 def is_valid_youtube_url(url: str) -> bool:
     return bool(VIDEO_REGEX.match(url.strip()))
 
+def _get_video_title(url: str) -> str:
+    result = subprocess.run([
+        YT_DLP, "--print", "title",
+        "--no-playlist",
+        "--js-runtimes", f"deno:{DENO}",
+        url
+    ], capture_output=True, text=True, timeout=30)
+    return result.stdout.strip()
+
 def download_youtube(url: str, job_id: str) -> dict:
     ensure_output_dir()
+    video_title = _get_video_title(url)
     video_path = OUTPUT_DIR / f"{job_id}_video.mp4"
     audio_path = OUTPUT_DIR / f"{job_id}_audio.wav"
 
     result = subprocess.run([
-        "yt-dlp", "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        YT_DLP, "-f", "best[height<=720]",
         "-o", str(video_path),
         "--merge-output-format", "mp4",
         "--no-playlist",
-        "--print", "title",
+        "--js-runtimes", f"deno:{DENO}",
         url
     ], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed: {result.stderr[:500]}")
 
-    video_title = result.stdout.strip()
-
     result = subprocess.run([
-        "ffmpeg", "-i", str(video_path),
+        FFMPEG, "-i", str(video_path),
         "-vn", "-acodec", "pcm_s16le",
         "-ar", "16000", "-ac", "1",
         str(audio_path), "-y"
     ], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[:500]}")
+        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[:1500]}")
 
     return {
         "video_path": str(video_path),
@@ -50,7 +59,7 @@ def download_youtube(url: str, job_id: str) -> dict:
 
 def get_video_duration(video_path: str) -> float:
     result = subprocess.run([
-        "ffprobe", "-v", "error",
+        FFPROBE, "-v", "error",
         "-show_entries", "format=duration",
         "-of", "csv=p=0", video_path
     ], capture_output=True, text=True)

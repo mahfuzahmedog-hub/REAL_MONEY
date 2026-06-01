@@ -18,7 +18,7 @@ def transcribe(audio_path: str) -> list:
         raise ValueError("Audio file is empty")
 
     model = get_model()
-    segments, _ = model.transcribe(audio_path, beam_size=1, vad_filter=True)
+    segments, _ = model.transcribe(audio_path, beam_size=1, vad_filter=False)
 
     result = []
     for seg in segments:

@@ -3,11 +3,21 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 export interface ClipResult {
   index: number
   score: number
+  viral_score: number
+  score_breakdown: Record<string, number>
   reason: string
   mood: string
   duration: number
   path: string
   filename: string
+  primary_signal: string
+  hook_text: string
+  title: string
+  tags: string[]
+  caption_instagram: string
+  caption_tiktok: string
+  caption_youtube: string
+  fallback_mode: boolean
 }
 
 export interface JobStatus {

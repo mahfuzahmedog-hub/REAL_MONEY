@@ -1,6 +1,7 @@
 import subprocess
 import random
 from pathlib import Path
+from .config import FFMPEG
 
 TRACKS_DIR = Path(__file__).resolve().parent.parent / "assets" / "music"
 
@@ -42,7 +43,7 @@ def mix_music(video_path: str, mood: str) -> str:
     output_path = video_path.replace(".mp4", "_music.mp4")
 
     result = subprocess.run([
-        "ffmpeg", "-i", video_path, "-i", track,
+        FFMPEG, "-i", video_path, "-i", track,
         "-filter_complex",
         "[1:a]volume=0.12[a1];[0:a][a1]amix=inputs=2:duration=first[outa]",
         "-map", "0:v", "-map", "[outa]",
