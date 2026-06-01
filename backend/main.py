@@ -1,7 +1,6 @@
 import os
 import uuid
 import asyncio
-import time
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -11,9 +10,13 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, OUTPUT_DIR
+from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, cleanup_old_outputs, OUTPUT_DIR
 
 app = FastAPI(title="REAL MONEY")
+
+@app.on_event("startup")
+async def startup():
+    cleanup_old_outputs()
 
 app.add_middleware(
     CORSMiddleware,

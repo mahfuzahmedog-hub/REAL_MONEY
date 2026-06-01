@@ -103,6 +103,7 @@ export default function Home() {
   const isDone = jobStatus?.done
 
   const getClipUrl = (jobId: string, index: number) => `${API_BASE}/clip/${jobId}/${index}`
+  const handleDownload = () => { window.open(getDownloadUrl(jobId!), "_blank") }
 
   const moodColor = (mood: string) => {
     const colors: Record<string, string> = {
@@ -268,9 +269,8 @@ export default function Home() {
               {clips.length} clip{clips.length > 1 ? "s" : ""} ready
             </h2>
             <div style={{ display: "flex", gap: "8px" }}>
-              <a
-                href={getDownloadUrl(jobId!)}
-                download
+              <button
+                onClick={handleDownload}
                 style={{
                   padding: "10px 24px",
                   borderRadius: "10px",
@@ -279,12 +279,11 @@ export default function Home() {
                   color: "#fff",
                   fontWeight: 700,
                   fontSize: "0.85rem",
-                  textDecoration: "none",
                   cursor: "pointer",
                 }}
               >
                 Download ZIP
-              </a>
+              </button>
               <button
                 onClick={handleReset}
                 style={{

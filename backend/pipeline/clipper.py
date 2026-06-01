@@ -20,7 +20,7 @@ def detect_smart_crop(video_path: str) -> tuple:
             break
         if frame_count == 0:
             h, w = frame.shape[:2]
-        if frame_count % 5 == 0:
+        if frame_count % 30 == 0:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
             for (x, y, fw, fh) in faces:

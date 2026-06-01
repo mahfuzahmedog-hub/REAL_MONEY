@@ -1,4 +1,5 @@
 import zipfile
+import shutil
 import time
 import asyncio
 from pathlib import Path
@@ -29,7 +30,6 @@ class PipelineStatus:
         }
 
 _statuses: dict[str, PipelineStatus] = {}
-_job_lock = asyncio.Lock()
 _active_job_count = 0
 
 def _stale_cleanup():
@@ -46,6 +46,14 @@ def get_status(job_id: str) -> dict:
         return {"progress": 0, "stage": "not_found", "clips": [], "error": "Job not found", "done": False}
     return s.to_dict()
 
+def cleanup_old_outputs():
+    cutoff = time.time() - STATUS_TTL_SEC
+    for p in OUTPUT_DIR.iterdir():
+        if p.is_dir() and p.stat().st_mtime < cutoff:
+            shutil.rmtree(p, ignore_errors=True)
+        elif p.suffix == ".zip" and p.stat().st_mtime < cutoff:
+            p.unlink(missing_ok=True)
+
 async def run_pipeline(url: str, job_id: str):
     global _active_job_count
 
@@ -59,8 +67,7 @@ async def run_pipeline(url: str, job_id: str):
 
     _active_job_count += 1
 
-    temp_paths = []
-    clip_final_paths = []
+    raw_paths = []
 
     try:
         s.stage = "validating"
@@ -71,7 +78,7 @@ async def run_pipeline(url: str, job_id: str):
         s.stage = "downloading"
         s.progress = 5
         paths = downloader.download_youtube(url, job_id)
-        temp_paths = [paths["video_path"], paths["audio_path"]]
+        raw_paths = [paths["video_path"], paths["audio_path"]]
         duration = downloader.get_video_duration(paths["video_path"])
         if duration < 30:
             raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
@@ -81,7 +88,8 @@ async def run_pipeline(url: str, job_id: str):
 
         s.stage = "transcribing"
         s.progress = 20
-        transcript = transcriber.transcribe(paths["audio_path"])
+        loop = asyncio.get_event_loop()
+        transcript = await loop.run_in_executor(None, transcriber.transcribe, paths["audio_path"])
         s.progress = 45
 
         s.stage = "analyzing"
@@ -113,15 +121,12 @@ async def run_pipeline(url: str, job_id: str):
                 paths["video_path"], job_id, i,
                 clip_start, clip_end, str(output_dir)
             )
-            temp_paths.append(clip_path)
 
             clip_path = subtitler.burn_subtitles(
                 clip_path, transcript, clip_start, clip_end
             )
-            temp_paths.append(clip_path)
 
             clip_path = music.mix_music(clip_path, clip["mood"])
-            clip_final_paths.append(clip_path)
 
             clip_results.append({
                 "index": i + 1,
@@ -146,7 +151,7 @@ async def run_pipeline(url: str, job_id: str):
                 if clip_file.exists():
                     zf.write(clip_file, arcname=clip["filename"])
 
-        temp_paths.append(str(zip_path))
+        raw_paths.append(str(zip_path))
         s.download_path = str(zip_path)
         s.progress = 100
         s.stage = "done"
@@ -156,7 +161,7 @@ async def run_pipeline(url: str, job_id: str):
         s.stage = "error"
         s.progress = 0
     finally:
-        downloader.cleanup_job_files(temp_paths)
+        downloader.cleanup_job_files(raw_paths)
         _active_job_count -= 1
 
 def get_clip_path(job_id: str, index: int) -> str | None:

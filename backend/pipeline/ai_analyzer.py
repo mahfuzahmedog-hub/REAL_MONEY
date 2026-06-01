@@ -50,7 +50,20 @@ Transcript:
     if not content:
         raise ValueError("AI returned empty response")
 
-    clips = json.loads(content)
+    try:
+        clips = json.loads(content)
+    except json.JSONDecodeError:
+        response = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[{"role": "user", "content": prompt + "\n\nIMPORTANT: Return ONLY valid JSON. No extra text."}],
+            temperature=0.1,
+            max_tokens=2000
+        )
+        content = response.choices[0].message.content.strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+        clips = json.loads(content)
+
     if not isinstance(clips, list):
         raise ValueError("AI response was not a list")
 
