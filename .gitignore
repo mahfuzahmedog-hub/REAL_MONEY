@@ -1,21 +1,10 @@
-# Python
+*.log
+*.wav
+*.mp4
+backend/output/
+.vs/
 __pycache__/
-*.py[cod]
-*.egg-info/
-venv/
-.env
-
-# Node
+*.pyc
 node_modules/
 .next/
-out/
-
-# Video processing
-*.mp4
-*.zip
-backend/output/
-backend/output/**/*.wav
-
-# OS
-.DS_Store
-Thumbs.db
+.env
