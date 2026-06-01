@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { startProcessing, getJobStatus, getDownloadUrl, checkHealth, triggerDownload, type ClipResult, type JobStatus, type HealthStatus } from "../lib/api"
+import { startProcessing, getJobStatus, getDownloadUrl, checkHealth, cancelProcessing, triggerDownload, type ClipResult, type JobStatus, type HealthStatus } from "../lib/api"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
@@ -21,6 +21,7 @@ const STAGE_LABELS: Record<string, string> = {
   clipping: "Creating clips...",
   done: "Done!",
   error: "Error occurred",
+  cancelled: "Cancelled",
 }
 
 export default function Home() {
@@ -59,6 +60,7 @@ export default function Home() {
         clips: [],
         error: "Lost connection to backend. Make sure it's running on port 8000.",
         download_path: null,
+        video_title: null,
         done: false,
       })
     }
@@ -89,6 +91,7 @@ export default function Home() {
         clips: [],
         error: msg,
         download_path: null,
+        video_title: null,
         done: false,
       })
     }
@@ -99,6 +102,11 @@ export default function Home() {
     setLoading(false)
     setJobStatus(null)
     setJobId(null)
+  }
+
+  const handleCancel = async () => {
+    if (!jobId) return
+    try { await cancelProcessing(jobId) } catch {}
   }
 
   const handleDownload = () => {
@@ -208,6 +216,7 @@ export default function Home() {
           <input
             type="url"
             placeholder="https://youtube.com/watch?v=..."
+            autoFocus
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             disabled={loading}
@@ -276,6 +285,22 @@ export default function Home() {
               boxShadow: progress > 0 && progress < 100 ? "0 0 8px rgba(212, 168, 83, 0.4)" : "none",
             }} />
           </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+            <button
+              onClick={handleCancel}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "6px",
+                border: "1px solid #3a1a1a",
+                background: "transparent",
+                color: "#ff6b6b",
+                cursor: "pointer",
+                fontSize: "0.8rem",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
           {progress < 100 && (
             <div className="shimmer" style={{
               height: "2px",
@@ -322,9 +347,16 @@ export default function Home() {
             alignItems: "center",
             marginBottom: "16px",
           }}>
-            <h2 style={{ color: "#e0e0e0", fontSize: "1.1rem", fontWeight: 600 }}>
-              {clips.length} clip{clips.length > 1 ? "s" : ""} ready
-            </h2>
+            <div>
+              <h2 style={{ color: "#e0e0e0", fontSize: "1.1rem", fontWeight: 600 }}>
+                {clips.length} clip{clips.length > 1 ? "s" : ""} ready
+              </h2>
+              {jobStatus?.video_title && (
+                <p style={{ color: "#666", fontSize: "0.85rem", marginTop: "4px" }}>
+                  {jobStatus.video_title}
+                </p>
+              )}
+            </div>
             <div style={{ display: "flex", gap: "8px" }}>
               <button
                 onClick={handleDownload}

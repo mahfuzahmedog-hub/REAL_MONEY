@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, cleanup_old_outputs, OUTPUT_DIR
+from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, cancel_job, cleanup_old_outputs, OUTPUT_DIR
 from pipeline.music import get_track_counts
 
 app = FastAPI(title="REAL MONEY")
@@ -49,6 +49,12 @@ async def process_video(req: ProcessRequest):
 @app.get("/status/{job_id}")
 async def get_job_status(job_id: str):
     return get_status(job_id)
+
+@app.post("/cancel/{job_id}")
+async def cancel_processing(job_id: str):
+    if cancel_job(job_id):
+        return {"status": "cancelled"}
+    raise HTTPException(400, "Job not found or already completed")
 
 @app.get("/clip/{job_id}/{index}")
 async def serve_clip(job_id: str, index: int):

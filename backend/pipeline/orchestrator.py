@@ -17,6 +17,8 @@ class PipelineStatus:
         self.clips = []
         self.error = None
         self.download_path = None
+        self.video_title = None
+        self.cancelled = False
         self.created_at = time.time()
 
     def to_dict(self):
@@ -26,6 +28,7 @@ class PipelineStatus:
             "clips": self.clips,
             "error": self.error,
             "download_path": self.download_path,
+            "video_title": self.video_title,
             "done": self.progress == 100
         }
 
@@ -43,8 +46,21 @@ def get_status(job_id: str) -> dict:
     _stale_cleanup()
     s = _statuses.get(job_id)
     if not s:
-        return {"progress": 0, "stage": "not_found", "clips": [], "error": "Job not found", "done": False}
+        return {"progress": 0, "stage": "not_found", "clips": [], "error": "Job not found", "download_path": None, "video_title": None, "done": False}
     return s.to_dict()
+
+def cancel_job(job_id: str) -> bool:
+    s = _statuses.get(job_id)
+    if not s or s.done or s.cancelled:
+        return False
+    s.cancelled = True
+    s.error = "Cancelled by user"
+    s.stage = "cancelled"
+    s.progress = 0
+    error_dir = OUTPUT_DIR / job_id
+    if error_dir.exists():
+        shutil.rmtree(error_dir, ignore_errors=True)
+    return True
 
 def cleanup_old_outputs():
     if not OUTPUT_DIR.exists():
@@ -68,7 +84,6 @@ async def run_pipeline(url: str, job_id: str):
         return
 
     _active_job_count += 1
-
     raw_paths = []
 
     try:
@@ -81,6 +96,7 @@ async def run_pipeline(url: str, job_id: str):
         s.progress = 5
         paths = downloader.download_youtube(url, job_id)
         raw_paths = [paths["video_path"], paths["audio_path"]]
+        s.video_title = paths.get("title")
         duration = downloader.get_video_duration(paths["video_path"])
         if duration < 30:
             raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
@@ -88,22 +104,34 @@ async def run_pipeline(url: str, job_id: str):
             raise ValueError(f"Video too long ({duration/60:.0f} min). Maximum {MAX_DURATION_SEC//60} minutes.")
         s.progress = 15
 
+        if s.cancelled:
+            return
+
         s.stage = "transcribing"
         s.progress = 20
         loop = asyncio.get_event_loop()
         transcript = await loop.run_in_executor(None, transcriber.transcribe, paths["audio_path"])
         s.progress = 45
 
+        if s.cancelled:
+            return
+
         s.stage = "analyzing"
         s.progress = 50
         clips = ai_analyzer.analyze_transcript(transcript, duration)
         s.progress = 60
+
+        if s.cancelled:
+            return
 
         output_dir = OUTPUT_DIR / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
         clip_results = []
         for i, clip in enumerate(clips):
+            if s.cancelled:
+                return
+
             clip_start = max(0, clip["start"])
             clip_end = min(clip["end"], duration)
             clip_duration = clip_end - clip_start
@@ -159,6 +187,8 @@ async def run_pipeline(url: str, job_id: str):
         s.stage = "done"
 
     except Exception as e:
+        if s.cancelled:
+            return
         s.error = str(e)
         s.stage = "error"
         s.progress = 0

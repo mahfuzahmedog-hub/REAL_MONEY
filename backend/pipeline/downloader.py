@@ -3,13 +3,17 @@ import re
 from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-YOUTUBE_REGEX = r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
+VIDEO_REGEX = re.compile(
+    r"(https?://)?(www\.)?"
+    r"(youtube\.com/(watch\?v=|shorts/)|youtu\.be/)"
+    r"[\w-]{11}"
+)
 
 def ensure_output_dir():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def is_valid_youtube_url(url: str) -> bool:
-    return bool(re.match(YOUTUBE_REGEX, url.strip()))
+    return bool(VIDEO_REGEX.match(url.strip()))
 
 def download_youtube(url: str, job_id: str) -> dict:
     ensure_output_dir()
@@ -21,10 +25,13 @@ def download_youtube(url: str, job_id: str) -> dict:
         "-o", str(video_path),
         "--merge-output-format", "mp4",
         "--no-playlist",
+        "--print", "title",
         url
     ], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed: {result.stderr[:500]}")
+
+    video_title = result.stdout.strip()
 
     result = subprocess.run([
         "ffmpeg", "-i", str(video_path),
@@ -38,7 +45,7 @@ def download_youtube(url: str, job_id: str) -> dict:
     return {
         "video_path": str(video_path),
         "audio_path": str(audio_path),
-        "original_name": Path(video_path).name
+        "title": video_title or Path(video_path).name
     }
 
 def get_video_duration(video_path: str) -> float:

@@ -16,6 +16,7 @@ export interface JobStatus {
   clips: ClipResult[]
   error: string | null
   download_path: string | null
+  video_title: string | null
   done: boolean
 }
 
@@ -44,6 +45,10 @@ export async function startProcessing(url: string): Promise<string> {
   }
   const data = await res.json()
   return data.job_id
+}
+
+export async function cancelProcessing(jobId: string): Promise<void> {
+  await fetch(`${API_BASE}/cancel/${jobId}`, { method: "POST" })
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {

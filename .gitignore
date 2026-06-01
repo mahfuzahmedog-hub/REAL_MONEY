@@ -12,9 +12,9 @@ out/
 
 # Video processing
 *.mp4
-*.wav
 *.zip
 backend/output/
+backend/output/**/*.wav
 
 # OS
 .DS_Store

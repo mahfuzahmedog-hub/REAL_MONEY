@@ -36,13 +36,15 @@ npm install
 
 ## Music
 
-Place CC0-licensed .mp3 files in `backend/assets/music/{chill,hype,emotional,funny,serious}/`.
-Or run the helper script (auto-downloads some tracks):
+Generated programmatically with Python (CC0, no downloads needed):
 
 ```powershell
 cd backend
-.\download_music.ps1
+venv\Scripts\activate
+python generate_music.py
 ```
+
+Or place CC0 .mp3/.wav files in `backend/assets/music/{chill,hype,emotional,funny,serious}/`.
 
 ## Run
 
