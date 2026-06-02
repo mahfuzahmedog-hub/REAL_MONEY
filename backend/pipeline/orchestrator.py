@@ -7,8 +7,9 @@ import tempfile
 import os
 import atexit
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality
+from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality, windowed
 
 _log_start = time.time()
 
@@ -26,6 +27,9 @@ atexit.register(shutil.rmtree, WORK_DIR, ignore_errors=True)
 
 processing_semaphore = asyncio.Semaphore(1)
 
+CLIP_ENCODE_WORKERS = 2
+encode_executor = ThreadPoolExecutor(max_workers=CLIP_ENCODE_WORKERS)
+
 class PipelineStatus:
     def __init__(self):
         self.progress = 0
@@ -37,6 +41,7 @@ class PipelineStatus:
         self.metadata_path = None
         self.cancelled = False
         self.created_at = time.time()
+        self.job_id: str | None = None
 
     def to_dict(self):
         return {
@@ -59,12 +64,52 @@ def _stale_cleanup():
     for jid in stale:
         _statuses.pop(jid, None)
 
+
+def _status_path(job_id: str) -> Path:
+    return OUTPUT_DIR / job_id / "status.json"
+
+
+def _save_status(s: "PipelineStatus"):
+    try:
+        path = _status_path(s.job_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(s.to_dict(), indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[orchestrator] failed to save status: {e}", flush=True)
+
+
+def _load_status(job_id: str) -> "PipelineStatus | None":
+    path = _status_path(job_id)
+    if not path.exists():
+        return None
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        s = PipelineStatus()
+        s.progress = d.get("progress", 0)
+        s.stage = d.get("stage", "unknown")
+        s.clips = d.get("clips", [])
+        s.error = d.get("error")
+        s.download_path = d.get("download_path")
+        s.video_title = d.get("video_title")
+        s.metadata_path = d.get("metadata_path")
+        s.cancelled = False
+        s.created_at = path.stat().st_mtime
+        s.job_id = job_id
+        return s
+    except Exception:
+        return None
+
+
 def get_status(job_id: str) -> dict:
     _stale_cleanup()
     s = _statuses.get(job_id)
-    if not s:
-        return {"progress": 0, "stage": "not_found", "clips": [], "error": "Job not found", "download_path": None, "video_title": None, "metadata_path": None, "done": False}
-    return s.to_dict()
+    if s:
+        return s.to_dict()
+    s = _load_status(job_id)
+    if s:
+        _statuses[job_id] = s
+        return s.to_dict()
+    return {"progress": 0, "stage": "not_found", "clips": [], "error": "Job not found", "download_path": None, "video_title": None, "metadata_path": None, "done": False}
 
 def cancel_job(job_id: str) -> bool:
     s = _statuses.get(job_id)
@@ -103,9 +148,11 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "caption_hook": ""
     }
 
-async def run_pipeline(url: str, job_id: str, niche: str = "general"):
+async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode: bool = False):
     s = PipelineStatus()
+    s.job_id = job_id
     _statuses[job_id] = s
+    _save_status(s)
 
     async with processing_semaphore:
         raw_paths = []
@@ -124,9 +171,14 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             s.progress = 3
             duration = downloader.check_duration(url)
             s.video_title = url.split("/")[-1]
-            _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min)")
+            _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min), quick_mode={quick_mode}")
             if duration < 30:
                 raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
+            _save_status(s)
+
+            if quick_mode and duration > 1200:
+                _log("Auto-enabling quick_mode: video > 20 min")
+                quick_mode = True
 
             _log("Stage 3/8: Downloading audio...")
             s.stage = "downloading"
@@ -141,36 +193,74 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             if s.cancelled:
                 return
 
-            _log("Stage 4/8: Transcribing (this will take a while for 81 min)...")
-            s.stage = "transcribing"
-            s.progress = 20
-            loop = asyncio.get_event_loop()
-            transcript = await loop.run_in_executor(None, transcriber.transcribe, audio_path)
-            _log(f"Transcription complete: {len(transcript)} segments")
-            s.progress = 50
-
-            if s.cancelled:
-                return
-
-            _log("Stage 5/8: Analyzing with Agent 1 (Groq)...")
-            s.stage = "analyzing"
-            s.progress = 52
-            agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
-            agent1_clips = agent1_result.get("clips", [])
+            transcript = []
             used_energy_fallback = False
-            _log(f"Agent 1 found {len(agent1_clips)} clips, low_confidence={agent1_result.get('low_confidence')}")
 
-            if agent1_result.get("low_confidence") or len(agent1_clips) < MIN_CLIPS_FOR_GROQ:
-                _log("Low confidence from Agent 1, running energy fallback...")
-                s.stage = "energy fallback"
-                s.progress = 54
-                energy_clips = quality.detect_energy_clips(audio_path, duration)
-                if energy_clips:
-                    agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
-                    used_energy_fallback = True
-                    _log(f"Energy fallback found {len(energy_clips)} clips")
+            if quick_mode:
+                _log("Stage 4/8 (FAST): Energy detection first, then transcribe candidate windows only")
+                s.stage = "energy detect"
+                s.progress = 20
+                loop = asyncio.get_event_loop()
+                energy_clips = await loop.run_in_executor(None, quality.detect_energy_clips, audio_path, duration)
+                _log(f"Energy found {len(energy_clips)} candidate windows")
+                if not energy_clips:
+                    raise ValueError("Energy detection found no candidate clips")
+
+                s.stage = "transcribing windows"
+                s.progress = 30
+                windows = [{"start": ec["start"], "end": ec["end"]} for ec in energy_clips]
+                transcript = await loop.run_in_executor(None, windowed.transcribe_windowed, audio_path, windows, job_dir)
+                _log(f"Windowed transcription: {len(transcript)} segments from {len(windows)} windows")
+                s.progress = 50
+
+                agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
+                used_energy_fallback = True
+                _log(f"Using {len(agent1_clips)} energy clips")
+
+                if len(transcript) >= MIN_CLIPS_FOR_GROQ:
+                    _log("Refining with Agent 1 using windowed transcript...")
+                    s.stage = "analyzing"
+                    s.progress = 45
+                    agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                    refined = agent1_result.get("clips", [])
+                    _save_status(s)
+                    if refined and len(refined) >= 3:
+                        agent1_clips = refined
+                        used_energy_fallback = False
+                        _log(f"Agent 1 refined to {len(agent1_clips)} clips")
+                    else:
+                        _log(f"Agent 1 returned {len(refined)} clips, keeping energy-based selection")
                 else:
-                    _log("Energy fallback found no clips")
+                    _log(f"Windowed transcript has {len(transcript)} segments, skipping Agent 1 refinement")
+            else:
+                _log("Stage 4/8: Transcribing full audio...")
+                s.stage = "transcribing"
+                s.progress = 20
+                loop = asyncio.get_event_loop()
+                transcript = await loop.run_in_executor(None, transcriber.transcribe, audio_path)
+                _log(f"Transcription complete: {len(transcript)} segments")
+                s.progress = 50
+
+                if s.cancelled:
+                    return
+
+                _log("Stage 5/8: Analyzing with Agent 1 (Groq)...")
+                s.stage = "analyzing"
+                s.progress = 52
+                agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                agent1_clips = agent1_result.get("clips", [])
+                _log(f"Agent 1 found {len(agent1_clips)} clips, low_confidence={agent1_result.get('low_confidence')}")
+                _save_status(s)
+
+                if agent1_result.get("low_confidence") or len(agent1_clips) < MIN_CLIPS_FOR_GROQ:
+                    _log("Low confidence from Agent 1, running energy fallback...")
+                    s.stage = "energy fallback"
+                    s.progress = 54
+                    energy_clips = quality.detect_energy_clips(audio_path, duration)
+                    if energy_clips:
+                        agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
+                        used_energy_fallback = True
+                        _log(f"Energy fallback found {len(energy_clips)} clips")
 
             if not agent1_clips:
                 raise ValueError("No clips could be identified. Try a different video.")
@@ -186,10 +276,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
                              "duration": c["duration"], "mood": c.get("mood", "hype")}
                             for c in agent1_clips]
-            fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
+            fallback_mode = used_energy_fallback or (not transcript) or (not quick_mode and False)
+            if quick_mode:
+                fallback_mode = True
             agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
             clips_meta = agent2_result.get("clips", [])
-            _log(f"Agent 2 generated metadata for {len(clips_meta)} clips")
+            _log(f"Agent 2 generated metadata for {len(clips_meta)} clips (fallback_mode={fallback_mode})")
+            _save_status(s)
 
             metadata_lookup = {}
             for c in clips_meta:
@@ -214,11 +307,25 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             output_dir_path = Path(OUTPUT_DIR) / job_id
             output_dir_path.mkdir(parents=True, exist_ok=True)
 
+            _log(f"Stage 7/8: Downloading full video (worst quality, fast)...")
+            s.stage = "downloading video"
+            s.progress = 58
+            full_video_path = os.path.join(job_dir, "full.mp4")
+            downloader.download_full_video(url, full_video_path)
+            raw_paths.append(full_video_path)
+            video_size = os.path.getsize(full_video_path) / (1024 * 1024)
+            _log(f"Full video downloaded: {video_size:.1f} MB")
+            s.progress = 62
+
             _log(f"Stage 7/8: Processing {len(agent1_clips)} clips...")
             clip_results = []
-            for i, clip in enumerate(agent1_clips):
+            clip_progress_start = 63
+            clip_progress_range = 30
+            total_clips = len(agent1_clips)
+
+            def _encode_one(i: int, clip: dict):
                 if s.cancelled:
-                    return
+                    return None
 
                 clip_id = clip.get("id", f"clip_{i+1:02d}")
                 meta = metadata_lookup.get(clip_id, {})
@@ -235,20 +342,17 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                     clip_end = clip_start + 90
                 if clip_duration < 7:
                     _log(f"  Skip clip {i+1}: too short ({clip_duration:.0f}s)")
-                    continue
+                    return None
 
-                _log(f"  Clip {i+1}/{len(agent1_clips)}: {clip_start:.0f}s-{clip_end:.0f}s ({clip_duration:.0f}s) hook='{caption_hook}'")
+                _log(f"  Clip {i+1}/{total_clips}: {clip_start:.0f}s-{clip_end:.0f}s ({clip_duration:.0f}s) hook='{caption_hook}'")
+                s.stage = f"clipping {i+1}/{total_clips}"
 
-                clip_progress_start = 60
-                clip_progress_range = 25
-                clip_progress = clip_progress_start + int(
-                    clip_progress_range * i / max(len(agent1_clips), 1)
-                )
-                s.stage = f"clipping {i+1}/{len(agent1_clips)}"
-                s.progress = clip_progress
-
-                section_path = downloader.download_clip_section(url, clip_start, clip_end, os.path.join(job_dir, "section.mp4"), i)
-                raw_paths.append(section_path)
+                section_path = os.path.join(job_dir, f"section_{i}.mp4")
+                try:
+                    downloader.cut_clip_from_video(full_video_path, clip_start, clip_end, section_path)
+                except Exception as e:
+                    _log(f"  Cut failed for clip {i+1}: {e}, trying yt-dlp section")
+                    section_path = downloader.download_clip_section(url, clip_start, clip_end, os.path.join(job_dir, "section.mp4"), i)
 
                 ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", ""))
                 if not ass_path:
@@ -264,15 +368,10 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                 final_size = os.path.getsize(final_path) / (1024 * 1024)
                 _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")
 
-                s.stage = f"clipping {i+1}/{len(agent1_clips)}"
-                s.progress = clip_progress_start + int(
-                    clip_progress_range * (i + 1) / max(len(agent1_clips), 1)
-                )
-
                 hook_text = meta.get("hook_text", "").replace("**", "").replace("__", "").replace("*", "")
                 viral_score = meta.get("viral_score") or clip.get("viral_score", 0)
 
-                clip_results.append({
+                return {
                     "index": i + 1,
                     "id": clip_id,
                     "score": round(viral_score, 1),
@@ -291,7 +390,24 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                     "caption_tiktok": meta.get("caption_tiktok", ""),
                     "caption_youtube": meta.get("caption_youtube", ""),
                     "fallback_mode": fallback_mode or meta.get("fallback_mode", False)
-                })
+                }
+
+            loop = asyncio.get_event_loop()
+            futures = [loop.run_in_executor(encode_executor, _encode_one, i, c) for i, c in enumerate(agent1_clips)]
+            for fut in asyncio.as_completed(futures):
+                if s.cancelled:
+                    return
+                result = await fut
+                if result is not None:
+                    clip_results.append(result)
+                    done = len(clip_results)
+                    s.progress = clip_progress_start + int(
+                        clip_progress_range * done / max(total_clips, 1)
+                    )
+                    s.stage = f"clipped {done}/{total_clips}"
+                    _save_status(s)
+
+            clip_results.sort(key=lambda r: r["index"])
 
             if not clip_results:
                 raise ValueError("No valid clips could be created from this video. Try a different video.")
@@ -337,6 +453,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             s.download_path = str(zip_path)
             s.progress = 100
             s.stage = "done"
+            _save_status(s)
             zip_size = os.path.getsize(zip_path) / (1024 * 1024)
             _log(f"Pipeline complete! ZIP: {zip_size:.1f} MB")
 
@@ -347,6 +464,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             s.error = str(e)
             s.stage = "error"
             s.progress = 0
+            _save_status(s)
             error_dir = OUTPUT_DIR / job_id
             if error_dir.exists():
                 shutil.rmtree(error_dir, ignore_errors=True)

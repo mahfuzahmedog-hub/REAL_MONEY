@@ -15,17 +15,21 @@ def get_crop_filter(input_w: int, input_h: int) -> str:
     return f"crop={target_w}:{crop_h}:{x_offset}:{y_offset},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
 
 def get_probe(video_path: str) -> dict:
+    """Use ffprobe for reliable width/height detection."""
+    from .config import FFPROBE
     result = subprocess.run([
-        FFMPEG, "-i", video_path
+        FFPROBE, "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0",
+        video_path
     ], capture_output=True, text=True)
-    for line in result.stderr.split("\n"):
-        if "Stream #0:0" in line and "Video" in line:
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if "x" in p and p.split("x")[0].isdigit():
-                    w, h = p.split("x")[:2]
-                    return {"width": int(w), "height": int(h)}
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            w, h = result.stdout.strip().split(",")
+            return {"width": int(w), "height": int(h)}
+        except (ValueError, IndexError):
+            pass
     return {"width": 1920, "height": 1080}
 
 def build_hook_filter(caption_hook: str) -> str:
@@ -45,6 +49,17 @@ def build_hook_filter(caption_hook: str) -> str:
         ":enable='between(t,0,2.5)'"
     )
 
+def _escape_ass_path(ass_path: str) -> str:
+    """Escape Windows path for ffmpeg subtitles filter.
+
+    ffmpeg parses colons as option separators, so we must escape them.
+    The cleanest way is: backslashes -> forward slashes, then escape colons.
+    Also, we wrap the path in single quotes to handle spaces.
+    """
+    p = ass_path.replace("\\", "/").replace(":", "\\:")
+    return f"subtitles='{p}'"
+
+
 def process_clip(
     video_path: str, ass_path: str, music_path: str | None,
     caption_hook: str, output_path: str, mood: str = "hype"
@@ -52,7 +67,8 @@ def process_clip(
     probe = get_probe(video_path)
     crop = get_crop_filter(probe["width"], probe["height"])
     hook = build_hook_filter(caption_hook)
-    vf = f"{crop},{hook},subtitles={ass_path}"
+    sub_filter = _escape_ass_path(ass_path)
+    vf = f"{crop},{hook},{sub_filter}"
 
     music_volume = "0.08" if mood in ("funny", "chill") else "0.12"
 
@@ -81,5 +97,6 @@ def process_clip(
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"Clip encoding failed: {result.stderr[:500]}")
+        err_tail = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+        raise RuntimeError(f"Clip encoding failed: {err_tail}")
     return output_path
