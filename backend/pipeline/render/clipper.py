@@ -1,6 +1,6 @@
 import subprocess
 from pathlib import Path
-from .config import FFMPEG
+from ..config import FFMPEG
 
 def get_crop_filter(input_w: int, input_h: int) -> str:
     target_w = int(input_h * 9 / 16)

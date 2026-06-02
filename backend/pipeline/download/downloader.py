@@ -2,7 +2,7 @@ import subprocess
 import re
 import os
 from pathlib import Path
-from .config import YT_DLP, FFMPEG, FFPROBE, DENO
+from ..config import YT_DLP, FFMPEG, FFPROBE, DENO
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 VIDEO_REGEX = re.compile(

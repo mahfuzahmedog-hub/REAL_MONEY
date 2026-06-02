@@ -9,7 +9,9 @@ import atexit
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality, windowed
+from .download import downloader, transcriber, windowed
+from .analyze import ai_analyzer, quality, subtitler
+from .render import clipper, music
 
 _log_start = time.time()
 

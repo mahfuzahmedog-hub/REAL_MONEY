@@ -3,7 +3,7 @@ import os
 import wave
 import numpy as np
 from pathlib import Path
-from .config import FFMPEG, FFPROBE
+from ..config import FFMPEG, FFPROBE
 
 SAMPLE_RATE = 16000
 

@@ -1,7 +1,7 @@
 import subprocess
 import random
 from pathlib import Path
-from .config import FFMPEG
+from ..config import FFMPEG
 
 TRACKS_DIR = Path(__file__).resolve().parent.parent / "assets" / "music"
 
