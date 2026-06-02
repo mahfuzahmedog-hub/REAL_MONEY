@@ -1,6 +1,7 @@
 import os
 import uuid
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -14,11 +15,12 @@ load_dotenv()
 from pipeline.orchestrator import run_pipeline, get_status, get_clip_path, cancel_job, cleanup_old_outputs, OUTPUT_DIR
 from pipeline.music import get_track_counts
 
-app = FastAPI(title="REAL MONEY")
-
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(application: FastAPI):
     cleanup_old_outputs()
+    yield
+
+app = FastAPI(title="REAL MONEY", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -17,10 +17,11 @@ def _load_audio(audio_path: str) -> np.ndarray:
         raise ValueError("Audio file is empty")
 
     with wave.open(str(path), "rb") as wf:
-        if wf.getnchannels() != 1:
-            raise ValueError(f"Expected mono audio, got {wf.getnchannels()} channels")
+        nchannels = wf.getnchannels()
         frames = wf.readframes(wf.getnframes())
         samples = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        if nchannels > 1:
+            samples = samples.reshape(-1, nchannels).mean(axis=1)
 
     return samples
 

@@ -1,8 +1,8 @@
 import re
 from pathlib import Path
 
-MAX_WORDS_PER_CARD = 5
-HIGHLIGHT_COLOR = "&H0053A8D4"
+MAX_WORDS_PER_CARD = 4
+HIGHLIGHT_COLOR = "&H00FFD700"
 EMOTION_KEYWORDS = {"shock", "surprise", "conflict", "rage", "failure", "win", "loss",
                     "amazing", "incredible", "worst", "best", "never", "always",
                     "terrible", "huge", "massive", "disaster", "genius", "destroyed",
@@ -62,7 +62,7 @@ WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,52,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,80,1
+Style: Default,Arial Black,62,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,2,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

@@ -26,7 +26,7 @@ def check_duration(url: str) -> float:
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp duration check failed: {result.stderr[:300]}")
     duration = float(result.stdout.strip() or 0)
-    if duration > 1800:
+    if duration > 6000:
         raise ValueError(
             f"Video too long ({duration/60:.0f} min). "
             f"Maximum 30 minutes. "
@@ -38,6 +38,7 @@ def download_audio_only(url: str, out_path: str) -> str:
     result = subprocess.run([
         YT_DLP, "-x", "--audio-format", "wav",
         "--audio-quality", "0",
+        "--postprocessor-args", "ffmpeg:-ac 1",
         "-o", out_path,
         "--no-playlist",
         "--js-runtimes", f"deno:{DENO}",

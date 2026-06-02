@@ -53,11 +53,18 @@ _VIRAL_PROMPT = """You are a viral short-form video editor who deeply understand
 Your job is to find 3-5 clips from this transcript that will perform well as vertical reels.
 
 A great clip MUST have:
-- A strong HOOK in the first 3 seconds: a surprising stat, bold/controversial claim, emotional peak, or curiosity gap
+- A strong HOOK in the first 3 seconds: a surprising stat, bold/controversial claim, emotional peak, curiosity gap, or provocative statement
 - A clear mini arc: setup -> tension/conflict -> payoff or punchline
 - Quotable, shareable language — something people would screenshot or repeat
 - High energy delivery (favor moments the speaker sounds most confident, fast-paced, or emotionally charged)
 - No slow intros, filler words, or topic transitions at the start
+
+For COMEDY content specifically:
+- Favor clips with a clear setup and punchline structure
+- The punchline should be in the last 5 seconds of the clip
+- Look for callbacks, running jokes, or observations the audience reacted to
+- caption_hook should be the provocative premise or setup, not the punchline
+- Score punchlines that get audience laughter higher on retention and shareability
 
 Scoring criteria (1-10 each):
 - hook_strength: how compelling are the first 3 seconds?
@@ -232,6 +239,14 @@ def analyze_transcript_agent1(
         return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
     from .transcriber import filter_segments
+    from . import market
+    market_context_str = ""
+    try:
+        market_ctx = market.get_market_context(niche=niche)
+        market_context_str = market.format_market_for_prompt(market_ctx)
+    except Exception as e:
+        print(f"[ai] market context fetch failed: {e}", flush=True)
+
     transcript_text = filter_segments(transcript, max_chars=6000)
 
     if not transcript_text.strip():
@@ -244,8 +259,10 @@ def analyze_transcript_agent1(
 
     for chunk in chunks:
         chunk_text = filter_segments(chunk, max_chars=6000)
+        market_block = f"\n\n{market_context_str}" if market_context_str else ""
         user_message = (
             f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}"
+            f"{market_block}"
             f"\n\nTRANSCRIPT:\n{chunk_text}"
         )
         try:
@@ -560,9 +577,20 @@ Before returning output verify every clip passes ALL of these:
 
 def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False) -> dict:
     from .transcriber import filter_segments
+    from . import market
     transcript_text = filter_segments(transcript, max_chars=6000)
 
-    user_message = f"NICHE: {niche}\nFALLBACK_MODE: {str(fallback_mode).lower()}\nCLIPS: {json.dumps(clips)}\n\nTRANSCRIPT:\n{transcript_text}"
+    market_block = ""
+    try:
+        market_ctx = market.get_market_context(niche=niche)
+        market_block = "\n\n" + market.format_market_for_prompt(market_ctx)
+    except Exception as e:
+        print(f"[ai] market context fetch failed (agent2): {e}", flush=True)
+
+    user_message = (
+        f"NICHE: {niche}\nFALLBACK_MODE: {str(fallback_mode).lower()}\n"
+        f"CLIPS: {json.dumps(clips)}{market_block}\n\nTRANSCRIPT:\n{transcript_text}"
+    )
 
     data = _call_groq(_AGENT2_PROMPT, user_message, "metadata_generator")
 

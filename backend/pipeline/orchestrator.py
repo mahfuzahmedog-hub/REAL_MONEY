@@ -6,8 +6,15 @@ import asyncio
 import tempfile
 import os
 import atexit
+import sys
 from pathlib import Path
 from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality
+
+_log_start = time.time()
+
+def _log(msg: str):
+    elapsed = time.time() - _log_start
+    print(f'  [{elapsed:6.1f}s] {msg}', flush=True)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 STATUS_TTL_SEC = 1800
@@ -106,50 +113,64 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
         os.makedirs(job_dir, exist_ok=True)
 
         try:
+            _log("Stage 1/8: Validating URL...")
             s.stage = "validating"
             s.progress = 2
             if not downloader.is_valid_youtube_url(url):
                 raise ValueError("Invalid YouTube URL. Please paste a valid youtube.com or youtu.be link.")
 
+            _log("Stage 2/8: Checking duration...")
             s.stage = "checking duration"
             s.progress = 3
             duration = downloader.check_duration(url)
             s.video_title = url.split("/")[-1]
+            _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min)")
             if duration < 30:
                 raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
 
+            _log("Stage 3/8: Downloading audio...")
             s.stage = "downloading"
             s.progress = 5
             audio_path = os.path.join(job_dir, "audio.wav")
             downloader.download_audio_only(url, audio_path)
             raw_paths.append(audio_path)
+            audio_size = os.path.getsize(audio_path) / (1024 * 1024)
+            _log(f"Audio downloaded: {audio_size:.1f} MB")
             s.progress = 15
 
             if s.cancelled:
                 return
 
+            _log("Stage 4/8: Transcribing (this will take a while for 81 min)...")
             s.stage = "transcribing"
             s.progress = 20
             loop = asyncio.get_event_loop()
             transcript = await loop.run_in_executor(None, transcriber.transcribe, audio_path)
+            _log(f"Transcription complete: {len(transcript)} segments")
             s.progress = 50
 
             if s.cancelled:
                 return
 
+            _log("Stage 5/8: Analyzing with Agent 1 (Groq)...")
             s.stage = "analyzing"
             s.progress = 52
             agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
             agent1_clips = agent1_result.get("clips", [])
             used_energy_fallback = False
+            _log(f"Agent 1 found {len(agent1_clips)} clips, low_confidence={agent1_result.get('low_confidence')}")
 
             if agent1_result.get("low_confidence") or len(agent1_clips) < MIN_CLIPS_FOR_GROQ:
+                _log("Low confidence from Agent 1, running energy fallback...")
                 s.stage = "energy fallback"
                 s.progress = 54
                 energy_clips = quality.detect_energy_clips(audio_path, duration)
                 if energy_clips:
                     agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
                     used_energy_fallback = True
+                    _log(f"Energy fallback found {len(energy_clips)} clips")
+                else:
+                    _log("Energy fallback found no clips")
 
             if not agent1_clips:
                 raise ValueError("No clips could be identified. Try a different video.")
@@ -159,6 +180,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             if s.cancelled:
                 return
 
+            _log(f"Stage 6/8: Generating metadata with Agent 2 (Groq)...")
             s.stage = "generating metadata"
             s.progress = 57
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
@@ -167,6 +189,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
             agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
             clips_meta = agent2_result.get("clips", [])
+            _log(f"Agent 2 generated metadata for {len(clips_meta)} clips")
 
             metadata_lookup = {}
             for c in clips_meta:
@@ -191,6 +214,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             output_dir_path = Path(OUTPUT_DIR) / job_id
             output_dir_path.mkdir(parents=True, exist_ok=True)
 
+            _log(f"Stage 7/8: Processing {len(agent1_clips)} clips...")
             clip_results = []
             for i, clip in enumerate(agent1_clips):
                 if s.cancelled:
@@ -210,7 +234,10 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                 if clip_duration > 90:
                     clip_end = clip_start + 90
                 if clip_duration < 7:
+                    _log(f"  Skip clip {i+1}: too short ({clip_duration:.0f}s)")
                     continue
+
+                _log(f"  Clip {i+1}/{len(agent1_clips)}: {clip_start:.0f}s-{clip_end:.0f}s ({clip_duration:.0f}s) hook='{caption_hook}'")
 
                 clip_progress_start = 60
                 clip_progress_range = 25
@@ -231,7 +258,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                 music_path = music.pick_track(meta.get("mood") or clip.get("mood", "chill"))
 
                 final_path = os.path.join(str(output_dir_path), f"clip_{i:02d}.mp4")
-                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path)
+                clip_mood = meta.get("mood") or clip.get("mood", "hype")
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood)
+
+                final_size = os.path.getsize(final_path) / (1024 * 1024)
+                _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")
 
                 s.stage = f"clipping {i+1}/{len(agent1_clips)}"
                 s.progress = clip_progress_start + int(
@@ -268,6 +299,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             s.clips = clip_results
             s.progress = 95
 
+            _log(f"Stage 8/8: Packaging {len(clip_results)} clips into ZIP...")
             metadata_path = output_dir_path / "metadata.json"
             metadata_export = []
             for cr in clip_results:
@@ -305,10 +337,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             s.download_path = str(zip_path)
             s.progress = 100
             s.stage = "done"
+            zip_size = os.path.getsize(zip_path) / (1024 * 1024)
+            _log(f"Pipeline complete! ZIP: {zip_size:.1f} MB")
 
         except Exception as e:
             if s.cancelled:
                 return
+            _log(f"ERROR: {e}")
             s.error = str(e)
             s.stage = "error"
             s.progress = 0

@@ -8,7 +8,7 @@ def get_crop_filter(input_w: int, input_h: int) -> str:
     if target_w % 2 != 0:
         target_w -= 1
     x_offset = (input_w - target_w) // 2
-    y_offset = int(input_h * 0.05)
+    y_offset = int(input_h * 0.02)
     crop_h = input_h - y_offset
     if crop_h % 2 != 0:
         crop_h -= 1
@@ -33,30 +33,35 @@ def build_hook_filter(caption_hook: str) -> str:
     return (
         f"drawtext=text='{safe}'"
         ":fontfile=/Windows/Fonts/arialbd.ttf"
-        ":fontsize=56"
+        ":fontsize=64"
         ":fontcolor=white"
-        ":borderw=3"
+        ":borderw=4"
         ":bordercolor=black"
+        ":shadowx=2"
+        ":shadowy=2"
+        ":shadowcolor=black"
         ":x=(w-text_w)/2"
-        ":y=h/4"
-        ":enable='between(t,0,2)'"
+        ":y=h/3"
+        ":enable='between(t,0,2.5)'"
     )
 
 def process_clip(
     video_path: str, ass_path: str, music_path: str | None,
-    caption_hook: str, output_path: str
+    caption_hook: str, output_path: str, mood: str = "hype"
 ) -> str:
     probe = get_probe(video_path)
     crop = get_crop_filter(probe["width"], probe["height"])
     hook = build_hook_filter(caption_hook)
     vf = f"{crop},{hook},subtitles={ass_path}"
 
+    music_volume = "0.08" if mood in ("funny", "chill") else "0.12"
+
     cmd = [FFMPEG, "-y", "-threads", "4", "-i", video_path]
     filter_complex = f"[0:v]{vf}[v]"
 
     if music_path:
         cmd.extend(["-i", music_path])
-        filter_complex += f";[1:a]volume=0.12[music];[0:a][music]amix=inputs=2:duration=first[a]"
+        filter_complex += f";[1:a]volume={music_volume}[music];[0:a][music]amix=inputs=2:duration=first[a]"
         map_flags = ["-map", "[v]", "-map", "[a]"]
     else:
         filter_complex += f";[0:a]acopy[a]"
@@ -67,7 +72,7 @@ def process_clip(
     cmd.extend([
         "-c:v", "libx264",
         "-preset", "veryfast",
-        "-crf", "26",
+        "-crf", "24",
         "-c:a", "aac", "-b:a", "96k",
         "-movflags", "+faststart",
         "-threads", "4",
