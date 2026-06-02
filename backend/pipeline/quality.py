@@ -30,14 +30,16 @@ def _rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(samples ** 2)))
 
 def _detect_mood_from_energy(avg_energy: float, peak_energy: float) -> str:
-    if avg_energy > 0.15 or peak_energy > 0.4:
+    if avg_energy > 0.15 and peak_energy > 0.25:
         return "hype"
-    elif avg_energy > 0.08 or peak_energy > 0.2:
+    elif peak_energy > 0.20 and avg_energy < 0.10:
         return "emotional"
-    elif avg_energy > 0.04:
+    elif avg_energy < 0.05:
         return "chill"
-    else:
+    elif avg_energy > 0.08:
         return "serious"
+    else:
+        return "chill"
 
 def score_clip_energy(audio_path: str, start: float, end: float) -> float:
     samples = _load_audio(audio_path)

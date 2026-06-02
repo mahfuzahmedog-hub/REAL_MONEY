@@ -7,7 +7,7 @@ Paste a YouTube URL, get 15–40s vertical (9:16) clips with burned-in subtitles
 ## How it works
 
 1. **Download** — yt-dlp pulls the video
-2. **Transcribe** — faster-whisper (tiny model, ~1 GB RAM) generates word-level timestamps
+2. **Transcribe** — faster-whisper (base model, ~1 GB RAM) generates word-level timestamps
 3. **Analyze** — Groq API (Llama 3.1 70B, free tier) picks viral moments: `[{start, end, score, reason, mood}]`
 4. **Clip** — OpenCV face detection crops to 9:16 center, ffmpeg re-encodes each segment
 5. **Subtitle** — SRT → burned-in white text with black outline via ffmpeg drawtext

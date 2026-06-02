@@ -163,7 +163,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
                          "duration": c["duration"], "mood": c.get("mood", "hype")}
                         for c in agent1_clips]
         fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
-        agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche=niche, fallback_mode=fallback_mode)
+        agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
         clips_meta = agent2_result.get("clips", [])
 
         metadata_lookup = {}
