@@ -238,8 +238,8 @@ def analyze_transcript_agent1(
     if not transcript:
         return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
-    from .transcriber import filter_segments
-    from . import market
+    from ..download.transcriber import filter_segments
+    from ..download import market
     market_context_str = ""
     try:
         market_ctx = market.get_market_context(niche=niche)
@@ -576,8 +576,8 @@ Before returning output verify every clip passes ALL of these:
 """
 
 def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False) -> dict:
-    from .transcriber import filter_segments
-    from . import market
+    from ..download.transcriber import filter_segments
+    from ..download import market
     transcript_text = filter_segments(transcript, max_chars=6000)
 
     market_block = ""

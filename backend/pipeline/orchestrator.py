@@ -354,7 +354,12 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                     downloader.cut_clip_from_video(full_video_path, clip_start, clip_end, section_path)
                 except Exception as e:
                     _log(f"  Cut failed for clip {i+1}: {e}, trying yt-dlp section")
-                    section_path = downloader.download_clip_section(url, clip_start, clip_end, os.path.join(job_dir, "section.mp4"), i)
+                    fallback_path = os.path.join(job_dir, f"section_fb_{i}.mp4")
+                    try:
+                        section_path = downloader.download_clip_section(url, clip_start, clip_end, fallback_path, i)
+                    except Exception as e2:
+                        _log(f"  yt-dlp fallback also failed for clip {i+1}: {e2}")
+                        return None
 
                 ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", ""))
                 if not ass_path:
@@ -396,10 +401,16 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
 
             loop = asyncio.get_event_loop()
             futures = [loop.run_in_executor(encode_executor, _encode_one, i, c) for i, c in enumerate(agent1_clips)]
-            for fut in asyncio.as_completed(futures):
+            results = await asyncio.gather(*futures, return_exceptions=True)
+            first_error = None
+            for result in results:
                 if s.cancelled:
                     return
-                result = await fut
+                if isinstance(result, Exception):
+                    _log(f"  Worker error: {result}")
+                    if first_error is None:
+                        first_error = result
+                    continue
                 if result is not None:
                     clip_results.append(result)
                     done = len(clip_results)
@@ -408,6 +419,8 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                     )
                     s.stage = f"clipped {done}/{total_clips}"
                     _save_status(s)
+            if first_error is not None and not clip_results:
+                raise first_error
 
             clip_results.sort(key=lambda r: r["index"])
 

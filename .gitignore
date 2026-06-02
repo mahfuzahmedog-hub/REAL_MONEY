@@ -5,7 +5,7 @@ backend/output/
 .vs/
 __pycache__/
 *.pyc
-node_modules/
-.next/
 .env
 backend/venv/
+backend/output/*.zip
+output/smoke_test_status/

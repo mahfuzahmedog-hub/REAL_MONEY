@@ -16,7 +16,7 @@ def get_crop_filter(input_w: int, input_h: int) -> str:
 
 def get_probe(video_path: str) -> dict:
     """Use ffprobe for reliable width/height detection."""
-    from .config import FFPROBE
+    from ..config import FFPROBE
     result = subprocess.run([
         FFPROBE, "-v", "error",
         "-select_streams", "v:0",
