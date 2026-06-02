@@ -394,6 +394,58 @@ def _format_transcript(transcript: list, max_chars: int = 15000) -> str:
         text = text[:max_chars] + "\n...[truncated]"
     return text
 
+def _chunk_transcript(transcript: list, chunk_chars: int = 12000) -> list:
+    """
+    Split long transcripts into overlapping chunks.
+    Each chunk overlaps by 20% with the next to avoid cutting mid-context.
+    Returns list of transcript segment lists.
+    """
+    if not transcript:
+        return []
+
+    full_text = "\n".join(
+        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}"
+        for s in transcript
+    )
+
+    if len(full_text) <= chunk_chars:
+        return [transcript]
+
+    chunks = []
+    chunk_segs = []
+    chunk_len = 0
+    overlap_chars = int(chunk_chars * 0.2)
+
+    i = 0
+    while i < len(transcript):
+        seg = transcript[i]
+        line = f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}\n"
+        chunk_segs.append(seg)
+        chunk_len += len(line)
+
+        if chunk_len >= chunk_chars:
+            chunks.append(chunk_segs[:])
+            # backtrack by overlap amount for next chunk
+            overlap_len = 0
+            j = len(chunk_segs) - 1
+            while j >= 0 and overlap_len < overlap_chars:
+                back_line = f"[{chunk_segs[j]['start']:.1f}s - {chunk_segs[j]['end']:.1f}s] {chunk_segs[j]['text']}\n"
+                overlap_len += len(back_line)
+                j -= 1
+            overlap_start = j + 1
+            chunk_segs = chunk_segs[overlap_start:]
+            chunk_len = sum(
+                len(f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}\n")
+                for s in chunk_segs
+            )
+
+        i += 1
+
+    if chunk_segs:
+        chunks.append(chunk_segs)
+
+    return chunks
+
 def _call_groq(system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool = True):
     cfg = AGENTS[agent_key]
 
@@ -453,37 +505,96 @@ def _parse_groq_response(content: str, system_prompt: str, user_message: str, ag
         content = re.sub(r"\s*```$", "", content)
         return json.loads(content)
 
-def analyze_transcript_agent1(transcript: list, duration: float, niche: str = "general", platform: str = "all") -> dict:
-    transcript_text = _format_transcript(transcript)
+def analyze_transcript_agent1(
+    transcript: list, duration: float,
+    niche: str = "general", platform: str = "all"
+) -> dict:
 
+    if not transcript:
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
+
+    transcript_text = _format_transcript(transcript)
     if not transcript_text.strip():
         return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
-    user_message = f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}\n\nTRANSCRIPT:\n{transcript_text}"
+    # Chunk long transcripts instead of truncating
+    chunks = _chunk_transcript(transcript, chunk_chars=12000)
 
-    data = _call_groq(_AGENT1_PROMPT, user_message, "clip_finder")
+    all_clips = []
+    any_low_confidence = False
 
-    if not isinstance(data, dict):
-        data = {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
+    for chunk in chunks:
+        chunk_text = _format_transcript(chunk, max_chars=13000)
+        user_message = (
+            f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}"
+            f"\n\nTRANSCRIPT:\n{chunk_text}"
+        )
+        try:
+            data = _call_groq(_AGENT1_PROMPT, user_message, "clip_finder")
+        except Exception:
+            any_low_confidence = True
+            continue
 
-    low_confidence = data.get("low_confidence", False)
-    clips = data.get("clips", [])
+        if not isinstance(data, dict):
+            any_low_confidence = True
+            continue
+
+        if data.get("low_confidence"):
+            any_low_confidence = True
+
+        clips = data.get("clips", [])
+        all_clips.extend(clips)
+
+    if not all_clips:
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
+
+    # Deduplicate clips that overlap across chunks
+    all_clips.sort(key=lambda x: float(x.get("start", 0)))
+    deduped = []
+    for c in all_clips:
+        overlap = False
+        for d in deduped:
+            c_start = float(c.get("start", 0))
+            c_end = float(c.get("end", 0))
+            d_start = float(d.get("start", 0))
+            d_end = float(d.get("end", 0))
+            if c_start < d_end and c_end > d_start:
+                overlap_dur = min(c_end, d_end) - max(c_start, d_start)
+                if overlap_dur / max(c_end - c_start, 1) > 0.5:
+                    overlap = True
+                    # Keep the higher scored clip
+                    if float(c.get("viral_score", 0)) > float(d.get("viral_score", 0)):
+                        deduped.remove(d)
+                        deduped.append(c)
+                    break
+        if not overlap:
+            deduped.append(c)
 
     normalized = []
-    for c in clips:
+    for i, c in enumerate(deduped):
         normalized.append({
-            "id": c.get("id", f"clip_{len(normalized)+1:02d}"),
+            "id": c.get("id", f"clip_{i+1:02d}"),
             "start": max(0.0, float(c.get("start", 0))),
             "end": float(c.get("end", 0)),
             "duration": float(c.get("duration", 0)),
             "viral_score": float(c.get("viral_score", 0)),
-            "score_breakdown": c.get("score_breakdown", {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0}),
+            "score_breakdown": c.get(
+                "score_breakdown",
+                {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0}
+            ),
             "tier": c.get("tier", "B"),
             "mood": _normalize_mood(c.get("mood", "")),
             "reason": c.get("reason", "Viral moment")
         })
 
     normalized.sort(key=lambda x: x["viral_score"], reverse=True)
+    # Cap at top 8 across all chunks
+    normalized = normalized[:8]
+    # Re-ID sequentially
+    for i, c in enumerate(normalized):
+        c["id"] = f"clip_{i+1:02d}"
+
+    low_confidence = any_low_confidence and len(normalized) < 3
 
     return {
         "agent": "1",

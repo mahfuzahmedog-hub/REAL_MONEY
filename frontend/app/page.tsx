@@ -24,9 +24,13 @@ const SIGNAL_EMOJIS: Record<string, string> = {
 const STAGE_LABELS: Record<string, string> = {
   validating: "Checking URL...",
   downloading: "Downloading video...",
-  transcribing: "Transcribing audio...",
-  analyzing: "AI analyzing best moments...",
+  transcribing: "Transcribing audio — this takes longer for long videos...",
+  analyzing: "AI finding viral moments...",
+  "energy fallback": "No speech detected — using audio energy detection...",
+  "generating metadata": "Generating hooks, titles and captions...",
   clipping: "Creating clips...",
+  subtitling: "Burning subtitles...",
+  music: "Adding music...",
   done: "Done!",
   error: "Error occurred",
   cancelled: "Cancelled",
@@ -294,6 +298,27 @@ export default function Home() {
           </select>
         </div>
       </form>
+
+      {url.trim() && !loading && !isDone && (
+        <div style={{
+          background: "#0a0a1a",
+          border: "1px solid #2a2a3a",
+          borderRadius: "10px",
+          padding: "10px 14px",
+          marginBottom: "16px",
+          fontSize: "0.8rem",
+          color: "#888",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+        }}>
+          <span>⏱</span>
+          <span>
+            Processing time: ~2 min for short videos, ~10–20 min for long ones.
+            Transcription runs on CPU — longer videos take longer.
+          </span>
+        </div>
+      )}
 
       {loading && (
         <div style={{

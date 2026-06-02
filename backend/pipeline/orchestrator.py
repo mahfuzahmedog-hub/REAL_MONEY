@@ -7,7 +7,7 @@ from pathlib import Path
 from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-MAX_DURATION_SEC = 5400
+MAX_DURATION_SEC = 1800  # 30 minutes — base Whisper on CPU limit
 STATUS_TTL_SEC = 1800
 MAX_CONCURRENT_JOBS = 1
 
@@ -120,7 +120,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
         if duration < 30:
             raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
         if duration > MAX_DURATION_SEC:
-            raise ValueError(f"Video too long ({duration/60:.0f} min). Maximum {MAX_DURATION_SEC//60} minutes.")
+            raise ValueError(
+                f"Video too long ({duration/60:.0f} min). "
+                f"Maximum {MAX_DURATION_SEC//60} minutes. "
+                f"For longer videos, trim to the best section first."
+            )
         s.progress = 15
 
         if s.cancelled:
@@ -203,8 +207,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
             if clip_duration < 7:
                 continue
 
+            clip_progress_start = 60
+            clip_progress_range = 25
+            clip_progress = clip_progress_start + int(
+                clip_progress_range * i / max(len(agent1_clips), 1)
+            )
             s.stage = f"clipping {i+1}/{len(agent1_clips)}"
-            s.progress = 60 + int(30 * (i + 1) / len(agent1_clips))
+            s.progress = clip_progress
 
             clip_path = clipper.cut_and_crop_clip(
                 paths["video_path"], job_id, i,
@@ -219,6 +228,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general"):
 
             mood = meta.get("mood") or clip.get("mood", "chill")
             clip_path = music.mix_music(clip_path, mood)
+
+            s.stage = f"clipping {i+1}/{len(agent1_clips)}"
+            s.progress = clip_progress_start + int(
+                clip_progress_range * (i + 1) / max(len(agent1_clips), 1)
+            )
 
             viral_score = meta.get("viral_score") or clip.get("viral_score", 0)
 
