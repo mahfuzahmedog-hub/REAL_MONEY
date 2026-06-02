@@ -69,7 +69,7 @@ def transcribe_clip(audio_path: str) -> list:
         temperature=0,
         vad_filter=False,
         condition_on_previous_text=False,
-        word_timestamps=False,
+        word_timestamps=True,
     )
     segments = list(segments)
 
@@ -78,10 +78,22 @@ def transcribe_clip(audio_path: str) -> list:
         text = seg.text.strip()
         if not text:
             continue
+        words = []
+        for w in (seg.words or []):
+            ww = (w.word or "").strip()
+            if not ww:
+                continue
+            words.append({
+                "word": ww,
+                "start": round(w.start, 2),
+                "end": round(w.end, 2),
+                "prob": round(w.probability, 2),
+            })
         result.append({
             "start": round(seg.start, 2),
             "end": round(seg.end, 2),
             "text": text,
+            "words": words,
         })
 
     return result

@@ -13,6 +13,7 @@ from pathlib import Path
 from .download import downloader, transcriber, windowed
 from .analyze import ai_analyzer, quality, subtitler
 from .render import clipper, music
+from .render import look
 
 _log_start = time.time()
 
@@ -151,7 +152,7 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "caption_hook": ""
     }
 
-async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode: bool = False):
+async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode: bool = False, brand_text: str = ""):
     s = PipelineStatus()
     s.job_id = job_id
     _statuses[job_id] = s
@@ -427,6 +428,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 except Exception as e:
                     _log(f"    Per-clip transcription failed: {e}")
 
+                clip_mood = meta.get("mood") or clip.get("mood", "hype")
                 if clip_transcript:
                     first_seg = clip_transcript[0]
                     first_t = first_seg.get("start", 0)
@@ -435,16 +437,25 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                     if first_t > 100:
                         rebased = []
                         for seg in clip_transcript:
-                            rebased.append({
+                            reb = {
                                 "start": max(0.0, seg["start"] - clip_start),
                                 "end": min(clip_duration, seg["end"] - clip_start),
                                 "text": seg["text"],
-                            })
-                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                            }
+                            if "words" in seg:
+                                reb["words"] = [
+                                    {"word": w.get("word", ""),
+                                     "start": max(0.0, w.get("start", 0) - clip_start),
+                                     "end": min(clip_duration, w.get("end", 0) - clip_start),
+                                     "prob": w.get("prob", 1.0)}
+                                    for w in seg["words"]
+                                ]
+                            rebased.append(reb)
+                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
                     else:
-                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
                 else:
-                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
                 if not ass_path:
                     ass_path = os.path.join(str(output_dir_path), f"subs_{i:02d}.ass")
                     Path(ass_path).write_text("", encoding="utf-8")
@@ -455,8 +466,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 music_path = music.pick_track(meta.get("mood") or clip.get("mood", "chill"))
 
                 final_path = os.path.join(str(output_dir_path), f"clip_{i:02d}.mp4")
-                clip_mood = meta.get("mood") or clip.get("mood", "hype")
-                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood)
+                reactions = look.find_punchline_reactions(
+                    clip_transcript if clip_transcript else transcript,
+                    clip_start, clip_duration,
+                )
+                if reactions:
+                    _log(f"    Punchline reactions: {[(r['emoji'], r['t']) for r in reactions]}")
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions)
 
                 final_size = os.path.getsize(final_path) / (1024 * 1024)
                 _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")

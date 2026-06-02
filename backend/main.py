@@ -34,6 +34,7 @@ class ProcessRequest(BaseModel):
     url: str
     niche: str = "general"
     quick_mode: bool = False
+    brand_text: str = ""
 
 @app.get("/health")
 async def health():
@@ -48,7 +49,7 @@ async def process_video(req: ProcessRequest):
     if not req.url or not req.url.strip():
         raise HTTPException(400, "URL is required")
     job_id = uuid.uuid4().hex[:12]
-    asyncio.create_task(run_pipeline(req.url.strip(), job_id, niche=req.niche, quick_mode=req.quick_mode))
+    asyncio.create_task(run_pipeline(req.url.strip(), job_id, niche=req.niche, quick_mode=req.quick_mode, brand_text=req.brand_text))
     return {"job_id": job_id}
 
 @app.get("/status/{job_id}")

@@ -2,6 +2,7 @@ import subprocess
 import re
 from pathlib import Path
 from ..config import FFMPEG
+from . import look
 
 def get_crop_filter(input_w: int, input_h: int) -> str:
     target_w = int(input_h * 9 / 16)
@@ -33,49 +34,35 @@ def get_probe(video_path: str) -> dict:
             pass
     return {"width": 1920, "height": 1080}
 
-def build_hook_filter(caption_hook: str) -> str:
-    safe = caption_hook.replace("\\", " ").replace("'", " ").replace(":", "\\:")
-    return (
-        f"drawtext=text='{safe}'"
-        ":fontfile=/Windows/Fonts/arialbd.ttf"
-        ":fontsize=64"
-        ":fontcolor=white"
-        ":borderw=4"
-        ":bordercolor=black"
-        ":shadowx=2"
-        ":shadowy=2"
-        ":shadowcolor=black"
-        ":x=(w-text_w)/2"
-        ":y=h/3"
-        ":enable='between(t,0,2.5)'"
-    )
-
 def _escape_ass_path(ass_path: str) -> str:
-    """Escape Windows path for ffmpeg subtitles filter.
-
-    ffmpeg parses colons as option separators inside filter args.
-    Use forward slashes and escape every colon with backslash.
-    Path is wrapped in single quotes to preserve spaces.
-    Append :original_size=1080x1920 so libass doesn't try to
-    parse the path itself for resolution hints (causes
-    "Unable to parse original_size option value" errors in ffmpeg 8.x).
-    """
     p = ass_path.replace("\\", "/").replace(":", "\\:")
     return f"subtitles='{p}':original_size=1080x1920"
 
 
 def process_clip(
     video_path: str, ass_path: str, music_path: str | None,
-    caption_hook: str, output_path: str, mood: str = "hype"
+    caption_hook: str, output_path: str, mood: str = "hype",
+    brand_text: str = "",
+    punchline_reactions: list | None = None,
 ) -> str:
     probe = get_probe(video_path)
     crop = get_crop_filter(probe["width"], probe["height"])
-    hook = build_hook_filter(caption_hook)
-    sub_filter = _escape_ass_path(ass_path)
-    vf = f"{crop},{hook},{sub_filter}"
+    grade = look.get_grade_filter(mood)
+    hook = look.build_hook_filter(caption_hook, mood)
+    watermark = look.build_brand_watermark_filter(brand_text, mood) if brand_text else ""
+    sub_filter = _escape_ass_path(ass_path) if ass_path and Path(ass_path).exists() and Path(ass_path).stat().st_size > 0 else ""
+    emojis = look.build_emoji_reaction_filter(punchline_reactions or [])
 
-    if not ass_path or not Path(ass_path).exists() or Path(ass_path).stat().st_size == 0:
-        vf = f"{crop},{hook}"
+    parts = [crop, grade]
+    if hook:
+        parts.append(hook)
+    if watermark:
+        parts.append(watermark)
+    if emojis:
+        parts.append(emojis)
+    if sub_filter:
+        parts.append(sub_filter)
+    vf = ",".join(parts)
 
     music_volume = "0.08" if mood in ("funny", "chill") else "0.12"
 

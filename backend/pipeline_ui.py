@@ -71,13 +71,13 @@ def _health_check() -> str:
         return f"Backend not reachable at {API_BASE}: {e}"
 
 
-def start_pipeline(url, niche, quick_mode):
+def start_pipeline(url, niche, quick_mode, brand_text):
     if not url or not url.strip():
         raise gr.Error("Please paste a YouTube URL")
     try:
         r = requests.post(
             f"{API_BASE}/process",
-            json={"url": url.strip(), "niche": niche, "quick_mode": bool(quick_mode)},
+            json={"url": url.strip(), "niche": niche, "quick_mode": bool(quick_mode), "brand_text": brand_text or ""},
             timeout=10,
         )
         r.raise_for_status()
@@ -166,6 +166,11 @@ with gr.Blocks(title="REAL MONEY - YouTube to Vertical Shorts", theme=gr.themes.
                 value=True,
                 label="Quick mode",
             )
+            brand_in = gr.Textbox(
+                label="Brand watermark (optional, e.g. 'YOUR EDITZ')",
+                placeholder="Leave blank for no watermark",
+                lines=1,
+            )
             start_btn = gr.Button("Start", variant="primary")
             cancel_btn = gr.Button("Cancel", interactive=False, visible=False)
             status_log = gr.Textbox(label="Pipeline status", lines=6, interactive=False, visible=False)
@@ -180,7 +185,7 @@ with gr.Blocks(title="REAL MONEY - YouTube to Vertical Shorts", theme=gr.themes.
 
     start_btn.click(
         start_pipeline,
-        inputs=[url_in, niche_in, quick_mode_in],
+        inputs=[url_in, niche_in, quick_mode_in, brand_in],
         outputs=[job_id_state, status_log],
     ).then(
         lambda: (gr.update(visible=True, interactive=True, value="Cancel"), gr.update(visible=True)),
