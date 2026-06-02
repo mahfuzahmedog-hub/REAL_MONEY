@@ -34,7 +34,7 @@ def get_probe(video_path: str) -> dict:
     return {"width": 1920, "height": 1080}
 
 def build_hook_filter(caption_hook: str) -> str:
-    safe = caption_hook.replace("'", "\\'").replace(":", "\\:")
+    safe = caption_hook.replace("\\", " ").replace("'", " ").replace(":", "\\:")
     return (
         f"drawtext=text='{safe}'"
         ":fontfile=/Windows/Fonts/arialbd.ttf"
@@ -53,12 +53,15 @@ def build_hook_filter(caption_hook: str) -> str:
 def _escape_ass_path(ass_path: str) -> str:
     """Escape Windows path for ffmpeg subtitles filter.
 
-    ffmpeg parses colons as option separators, so we must escape them.
-    The cleanest way is: backslashes -> forward slashes, then escape colons.
-    Also, we wrap the path in single quotes to handle spaces.
+    ffmpeg parses colons as option separators inside filter args.
+    Use forward slashes and escape every colon with backslash.
+    Path is wrapped in single quotes to preserve spaces.
+    Append :original_size=1080x1920 so libass doesn't try to
+    parse the path itself for resolution hints (causes
+    "Unable to parse original_size option value" errors in ffmpeg 8.x).
     """
     p = ass_path.replace("\\", "/").replace(":", "\\:")
-    return f"subtitles='{p}'"
+    return f"subtitles='{p}':original_size=1080x1920"
 
 
 def process_clip(
