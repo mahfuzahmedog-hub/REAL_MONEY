@@ -15,7 +15,7 @@ from pipeline.orchestrator import run_pipeline, _statuses
 
 async def test():
     url = 'https://www.youtube.com/watch?v=LhpZJwUboeI'
-    job_id = 'test02'
+    job_id = f'test_{int(time.time())}'
     quick_mode = True
 
     print('=' * 60)

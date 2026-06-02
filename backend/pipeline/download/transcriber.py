@@ -53,3 +53,35 @@ def filter_segments(segments: list, max_chars: int = 6000) -> str:
     if len(text) > max_chars:
         text = text[:max_chars] + "...[truncated]"
     return text
+
+def transcribe_clip(audio_path: str) -> list:
+    if not Path(audio_path).exists():
+        return []
+    file_size = Path(audio_path).stat().st_size
+    if file_size < 1024:
+        return []
+
+    model = get_model()
+    segments, _ = model.transcribe(
+        audio_path,
+        beam_size=1,
+        best_of=1,
+        temperature=0,
+        vad_filter=False,
+        condition_on_previous_text=False,
+        word_timestamps=False,
+    )
+    segments = list(segments)
+
+    result = []
+    for seg in segments:
+        text = seg.text.strip()
+        if not text:
+            continue
+        result.append({
+            "start": round(seg.start, 2),
+            "end": round(seg.end, 2),
+            "text": text,
+        })
+
+    return result

@@ -100,9 +100,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     return header + "\n".join(events)
 
-def write_ass(transcript: list, clip_start: float, clip_end: float, output_dir: str, hook_text: str = "") -> str:
+def write_ass(transcript: list, clip_start: float, clip_end: float, output_dir: str, hook_text: str = "", filename: str = "subs.ass") -> str:
     ass_content = build_ass(transcript, clip_start, clip_end, hook_text)
-    ass_path = Path(output_dir) / "subs.ass"
+    ass_path = Path(output_dir) / filename
     if not ass_content.strip():
         return ""
     ass_path.write_text(ass_content, encoding="utf-8")

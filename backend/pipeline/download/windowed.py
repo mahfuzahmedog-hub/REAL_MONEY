@@ -72,3 +72,58 @@ def transcribe_windowed(audio_path: str, windows: list, job_dir: str) -> list:
 
     all_segments.sort(key=lambda s: s["start"])
     return all_segments
+
+def transcribe_windowed_with_paths(audio_path: str, windows: list, job_dir: str) -> list:
+    """
+    Transcribe windows but KEEP the per-window WAV files (no unlink).
+    Returns list of {"start", "end", "audio_path", "segments"}.
+    Worker can reuse the audio path to skip re-extraction.
+    """
+    from .transcriber import get_model
+
+    model = get_model()
+    out = []
+
+    for i, w in enumerate(windows):
+        seg_path = os.path.join(job_dir, f"win_{i}.wav")
+        try:
+            extract_audio_segment(audio_path, w["start"], w["end"], seg_path)
+        except Exception as e:
+            print(f"[transcribe_windowed] extract failed for {w}: {e}", flush=True)
+            out.append({"start": w["start"], "end": w["end"], "audio_path": None, "segments": []})
+            continue
+
+        try:
+            segments, _ = model.transcribe(
+                seg_path,
+                beam_size=1,
+                best_of=1,
+                temperature=0,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            segments = list(segments)
+        except Exception as e:
+            print(f"[transcribe_windowed] transcribe failed for window {i}: {e}", flush=True)
+            out.append({"start": w["start"], "end": w["end"], "audio_path": seg_path, "segments": []})
+            continue
+
+        segs = []
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+            segs.append({
+                "start": round(seg.start + w["start"], 2),
+                "end": round(seg.end + w["start"], 2),
+                "text": text,
+            })
+
+        out.append({
+            "start": w["start"],
+            "end": w["end"],
+            "audio_path": seg_path,
+            "segments": segs,
+        })
+
+    return out

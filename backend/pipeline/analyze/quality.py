@@ -30,15 +30,28 @@ def _rms(samples: np.ndarray) -> float:
         return 0.0
     return float(np.sqrt(np.mean(samples ** 2)))
 
-def _detect_mood_from_energy(avg_energy: float, peak_energy: float) -> str:
+def _zcr(samples: np.ndarray) -> float:
+    if len(samples) < 2:
+        return 0.0
+    signs = np.sign(samples)
+    signs[signs == 0] = 1
+    crossings = np.sum(np.abs(np.diff(signs)) > 0)
+    return float(crossings) / len(samples)
+
+def _detect_mood_from_energy(avg_energy: float, peak_energy: float, zcr: float = 0.0) -> str:
+    dynamic_range = peak_energy - avg_energy
     if avg_energy > 0.15 and peak_energy > 0.25:
+        if zcr > 0.15:
+            return "funny"
         return "hype"
-    elif peak_energy > 0.20 and avg_energy < 0.10:
+    elif dynamic_range > 0.18 and avg_energy < 0.12:
         return "emotional"
-    elif avg_energy < 0.05:
+    elif avg_energy < 0.04 and zcr < 0.08:
         return "chill"
-    elif avg_energy > 0.08:
+    elif 0.04 <= avg_energy < 0.10 and dynamic_range < 0.10:
         return "serious"
+    elif zcr > 0.20 and avg_energy > 0.10:
+        return "funny"
     else:
         return "chill"
 
@@ -95,6 +108,11 @@ def detect_energy_clips(audio_path: str, duration: float) -> list:
             avg_energy = float(np.mean(segment))
             peak_energy = float(np.max(segment))
 
+            seg_start_sample = i * step_size
+            seg_end_sample = (i + window_len) * step_size
+            seg_samples = samples[seg_start_sample:seg_end_sample]
+            zcr = _zcr(seg_samples)
+
             total_score = avg_energy * 0.6 + peak_energy * 0.4
 
             start_time = i * time_per_step
@@ -111,23 +129,48 @@ def detect_energy_clips(audio_path: str, duration: float) -> list:
                 "energy_score": round(total_score, 4),
                 "avg_energy": round(avg_energy, 4),
                 "peak_energy": round(peak_energy, 4),
-                "mood": _detect_mood_from_energy(avg_energy, peak_energy)
+                "zcr": round(zcr, 4),
+                "mood": _detect_mood_from_energy(avg_energy, peak_energy, zcr)
             })
 
     candidates.sort(key=lambda x: x["energy_score"], reverse=True)
 
-    deduped = []
+    target_moods = ["hype", "funny", "emotional", "serious", "chill"]
+    selected = []
+    used_moods = []
+
+    for target in target_moods:
+        for c in candidates:
+            if c["mood"] != target:
+                continue
+            overlap = False
+            for d in selected:
+                if c["start"] < d["end"] and c["end"] > d["start"]:
+                    overlap_duration = min(c["end"], d["end"]) - max(c["start"], d["start"])
+                    if overlap_duration / min(c["duration"], d["duration"]) > 0.4:
+                        overlap = True
+                        break
+            if not overlap:
+                selected.append(c)
+                used_moods.append(target)
+                break
+
     for c in candidates:
+        if len(selected) >= 5:
+            break
+        if c["mood"] in used_moods:
+            continue
         overlap = False
-        for d in deduped:
+        for d in selected:
             if c["start"] < d["end"] and c["end"] > d["start"]:
                 overlap_duration = min(c["end"], d["end"]) - max(c["start"], d["start"])
-                if overlap_duration / min(c["duration"], d["duration"]) > 0.5:
+                if overlap_duration / min(c["duration"], d["duration"]) > 0.4:
                     overlap = True
                     break
         if not overlap:
-            deduped.append(c)
-            if len(deduped) >= 5:
-                break
+            selected.append(c)
+            used_moods.append(c["mood"])
 
-    return deduped[:5]
+    selected.sort(key=lambda x: x["start"])
+
+    return selected[:5]

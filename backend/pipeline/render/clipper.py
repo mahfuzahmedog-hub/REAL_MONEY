@@ -1,4 +1,5 @@
 import subprocess
+import re
 from pathlib import Path
 from ..config import FFMPEG
 
@@ -70,9 +71,12 @@ def process_clip(
     sub_filter = _escape_ass_path(ass_path)
     vf = f"{crop},{hook},{sub_filter}"
 
+    if not ass_path or not Path(ass_path).exists() or Path(ass_path).stat().st_size == 0:
+        vf = f"{crop},{hook}"
+
     music_volume = "0.08" if mood in ("funny", "chill") else "0.12"
 
-    cmd = [FFMPEG, "-y", "-threads", "4", "-i", video_path]
+    cmd = [FFMPEG, "-y", "-threads", "2", "-i", video_path]
     filter_complex = f"[0:v]{vf}[v]"
 
     if music_path:
@@ -87,16 +91,40 @@ def process_clip(
     cmd.extend(map_flags)
     cmd.extend([
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "24",
-        "-c:a", "aac", "-b:a", "96k",
+        "-preset", "medium",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
-        "-threads", "4",
+        "-threads", "2",
         output_path, "-y"
     ])
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        err_tail = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+        err = result.stderr or ""
+        lines = err.splitlines()
+        error_markers = ("error", "Error", "ERROR", "failed", "Failed", "FAILED",
+                         "Invalid", "invalid", "No such", "no such",
+                         "Conversion failed", "Impossible", "missing")
+        err_lines = [
+            ln for ln in lines
+            if any(m in ln for m in error_markers)
+        ]
+        if not err_lines:
+            err_lines = [
+                ln for ln in lines
+                if not ln.strip().startswith("--enable-")
+                and not ln.strip().startswith("configuration:")
+                and not ln.strip().startswith("ffmpeg version")
+                and "Copyright (c)" not in ln
+                and "built with" not in ln
+                and not re.match(r"^\s*lib\w+\s+\d", ln)
+                and "libass API version" not in ln
+                and "libass direct render" not in ln
+            ]
+        if not err_lines:
+            err_lines = lines
+        err_tail = "\n".join(err_lines[-30:]) if err_lines else err[-1500:]
         raise RuntimeError(f"Clip encoding failed: {err_tail}")
     return output_path

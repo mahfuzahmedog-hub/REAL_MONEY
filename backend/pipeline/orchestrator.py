@@ -7,6 +7,7 @@ import tempfile
 import os
 import atexit
 import sys
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from .download import downloader, transcriber, windowed
@@ -211,8 +212,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 s.stage = "transcribing windows"
                 s.progress = 30
                 windows = [{"start": ec["start"], "end": ec["end"]} for ec in energy_clips]
-                transcript = await loop.run_in_executor(None, windowed.transcribe_windowed, audio_path, windows, job_dir)
-                _log(f"Windowed transcription: {len(transcript)} segments from {len(windows)} windows")
+                window_transcripts = await loop.run_in_executor(None, windowed.transcribe_windowed_with_paths, audio_path, windows, job_dir)
+                window_segment_counts = sum(1 for wt in window_transcripts if wt.get("segments"))
+                _log(f"Windowed transcription: {window_segment_counts}/{len(windows)} windows had speech")
+                transcript = []
+                for wt in window_transcripts:
+                    transcript.extend(wt["segments"])
+                transcript.sort(key=lambda s: s["start"])
                 s.progress = 50
 
                 agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
@@ -233,7 +239,20 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                     else:
                         _log(f"Agent 1 returned {len(refined)} clips, keeping energy-based selection")
                 else:
-                    _log(f"Windowed transcript has {len(transcript)} segments, skipping Agent 1 refinement")
+                    _log(f"Windowed transcript has {len(transcript)} segments, attempting Agent 1 with sparse data")
+                    s.stage = "analyzing"
+                    s.progress = 45
+                    try:
+                        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                        refined = agent1_result.get("clips", [])
+                        if refined and len(refined) >= 3:
+                            agent1_clips = refined
+                            used_energy_fallback = False
+                            _log(f"Agent 1 (sparse) refined to {len(agent1_clips)} clips")
+                        else:
+                            _log(f"Agent 1 returned {len(refined)} clips, keeping energy-based selection")
+                    except Exception as e:
+                        _log(f"Agent 1 (sparse) failed: {e}, keeping energy-based selection")
             else:
                 _log("Stage 4/8: Transcribing full audio...")
                 s.stage = "transcribing"
@@ -278,9 +297,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
                              "duration": c["duration"], "mood": c.get("mood", "hype")}
                             for c in agent1_clips]
-            fallback_mode = used_energy_fallback or (not transcript) or (not quick_mode and False)
-            if quick_mode:
-                fallback_mode = True
+            fallback_mode = used_energy_fallback or (not transcript)
             agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
             clips_meta = agent2_result.get("clips", [])
             _log(f"Agent 2 generated metadata for {len(clips_meta)} clips (fallback_mode={fallback_mode})")
@@ -300,6 +317,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 cid = c.get("id", "")
                 ch = c.get("caption_hook", "") or ""
                 caption_hook_lookup[cid] = ch
+
+            for c in clips_meta:
+                cid = c.get("id", "")
+                if cid and c.get("hook_text"):
+                    caption_hook_lookup[cid] = c["hook_text"]
 
             s.progress = 60
 
@@ -324,6 +346,22 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             clip_progress_start = 63
             clip_progress_range = 30
             total_clips = len(agent1_clips)
+
+            def _find_window_audio(clip_start: float) -> str | None:
+                if not quick_mode:
+                    return None
+                for wt in window_transcripts:
+                    if abs(wt["start"] - clip_start) < 2.0:
+                        return wt.get("audio_path")
+                return None
+
+            def _find_window_segments(clip_start: float) -> list:
+                if not quick_mode:
+                    return []
+                for wt in window_transcripts:
+                    if abs(wt["start"] - clip_start) < 2.0:
+                        return wt.get("segments", [])
+                return []
 
             def _encode_one(i: int, clip: dict):
                 if s.cancelled:
@@ -361,7 +399,55 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                         _log(f"  yt-dlp fallback also failed for clip {i+1}: {e2}")
                         return None
 
-                ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", ""))
+                clip_audio_path = os.path.join(job_dir, f"clip_audio_{i}.wav")
+                clip_transcript = []
+                try:
+                    from .download.transcriber import transcribe_clip
+
+                    win_audio = _find_window_audio(clip_start)
+                    win_segs = _find_window_segments(clip_start)
+
+                    if win_audio and os.path.exists(win_audio) and win_segs:
+                        clip_transcript = win_segs
+                        _log(f"    Reusing window transcript: {len(clip_transcript)} segments")
+                    else:
+                        from .config import FFMPEG
+                        cut_result = subprocess.run([
+                            FFMPEG, "-y", "-v", "error",
+                            "-ss", "0", "-i", section_path,
+                            "-t", str(clip_duration),
+                            "-vn", "-ac", "1", "-ar", "16000",
+                            "-c:a", "pcm_s16le",
+                            clip_audio_path
+                        ], capture_output=True, text=True)
+                        if cut_result.returncode == 0 and os.path.getsize(clip_audio_path) > 1024:
+                            clip_transcript = transcribe_clip(clip_audio_path)
+                            if clip_transcript:
+                                _log(f"    Per-clip transcript: {len(clip_transcript)} segments")
+                except Exception as e:
+                    _log(f"    Per-clip transcription failed: {e}")
+
+                if clip_transcript:
+                    first_seg = clip_transcript[0]
+                    first_t = first_seg.get("start", 0)
+                    last_seg = clip_transcript[-1]
+                    last_t = last_seg.get("end", 0)
+                    if first_t > 100:
+                        rebased = []
+                        for seg in clip_transcript:
+                            rebased.append({
+                                "start": max(0.0, seg["start"] - clip_start),
+                                "end": min(clip_duration, seg["end"] - clip_start),
+                                "text": seg["text"],
+                            })
+                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                    else:
+                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                else:
+                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass")
+                if not ass_path:
+                    ass_path = os.path.join(str(output_dir_path), f"subs_{i:02d}.ass")
+                    Path(ass_path).write_text("", encoding="utf-8")
                 if not ass_path:
                     ass_path = os.path.join(str(output_dir_path), "subs.ass")
                     Path(ass_path).write_text("", encoding="utf-8")

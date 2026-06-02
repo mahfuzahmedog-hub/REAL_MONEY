@@ -3,7 +3,7 @@ import random
 from pathlib import Path
 from ..config import FFMPEG
 
-TRACKS_DIR = Path(__file__).resolve().parent.parent / "assets" / "music"
+TRACKS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "music"
 
 MOOD_TRACKS = {
     "chill": [],
