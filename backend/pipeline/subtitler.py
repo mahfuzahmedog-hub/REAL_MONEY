@@ -1,8 +1,5 @@
 import re
-import shutil
-import subprocess
 from pathlib import Path
-from .config import FFMPEG
 
 MAX_WORDS_PER_CARD = 5
 HIGHLIGHT_COLOR = "&H0053A8D4"
@@ -56,9 +53,8 @@ def _time_slice(seg_start: float, seg_end: float, card_index: int, total_cards: 
 
 def build_ass(transcript: list, clip_start: float, clip_end: float, hook_text: str = "") -> str:
     highlight_words = _get_highlight_words(hook_text)
-    clip_duration = clip_end - clip_start
 
-    header = f"""[Script Info]
+    header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -66,7 +62,7 @@ WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,32,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,10,10,80,1
+Style: Default,Arial Black,52,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -104,35 +100,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     return header + "\n".join(events)
 
-def burn_subtitles(video_path: str, transcript: list,
-                    clip_start: float, clip_end: float,
-                    hook_text: str = "") -> str:
+def write_ass(transcript: list, clip_start: float, clip_end: float, output_dir: str, hook_text: str = "") -> str:
     ass_content = build_ass(transcript, clip_start, clip_end, hook_text)
+    ass_path = Path(output_dir) / "subs.ass"
     if not ass_content.strip():
-        return video_path
-
-    output_path = video_path.replace(".mp4", "_subbed.mp4")
-    output_dir = Path(video_path).parent
-    ass_file = output_dir / "subs.ass"
-
-    ass_file.write_text(ass_content, encoding="utf-8")
-
-    filter_file = output_dir / "vf.txt"
-    filter_file.write_text(
-        f"subtitles={ass_file.name}\n",
-        encoding="utf-8"
-    )
-
-    result = subprocess.run([
-        FFMPEG, "-i", video_path,
-        "-filter_script:v", str(filter_file),
-        "-c:a", "copy", output_path, "-y"
-    ], capture_output=True, text=True, cwd=str(output_dir))
-
-    ass_file.unlink(missing_ok=True)
-    filter_file.unlink(missing_ok=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Subtitle burn failed: {result.stderr[:1500]}")
-
-    Path(video_path).unlink(missing_ok=True)
-    return output_path
+        return ""
+    ass_path.write_text(ass_content, encoding="utf-8")
+    return str(ass_path)

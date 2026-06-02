@@ -3,16 +3,21 @@ import zipfile
 import shutil
 import time
 import asyncio
+import tempfile
+import os
+import atexit
 from pathlib import Path
 from . import downloader, transcriber, ai_analyzer, clipper, subtitler, music, quality
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-MAX_DURATION_SEC = 1800  # 30 minutes — base Whisper on CPU limit
 STATUS_TTL_SEC = 1800
-MAX_CONCURRENT_JOBS = 1
 
 MIN_CLIPS_FOR_GROQ = 3
-ENERGY_FALLBACK_CLIP_COUNT = 5
+
+WORK_DIR = tempfile.mkdtemp(prefix="reels_")
+atexit.register(shutil.rmtree, WORK_DIR, ignore_errors=True)
+
+processing_semaphore = asyncio.Semaphore(1)
 
 class PipelineStatus:
     def __init__(self):
@@ -39,7 +44,6 @@ class PipelineStatus:
         }
 
 _statuses: dict[str, PipelineStatus] = {}
-_active_job_count = 0
 
 def _stale_cleanup():
     now = time.time()
@@ -88,231 +92,240 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "score_breakdown": {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0},
         "tier": "B",
         "mood": ec.get("mood", "hype"),
-        "reason": f"Energy detection: avg={ec['avg_energy']:.3f}, peak={ec['peak_energy']:.3f}"
+        "reason": f"Energy detection: avg={ec['avg_energy']:.3f}, peak={ec['peak_energy']:.3f}",
+        "caption_hook": ""
     }
 
 async def run_pipeline(url: str, job_id: str, niche: str = "general"):
-    global _active_job_count
-
     s = PipelineStatus()
     _statuses[job_id] = s
 
-    if _active_job_count >= MAX_CONCURRENT_JOBS:
-        s.error = "Another job is already running. Wait for it to finish, then try again."
-        s.stage = "error"
-        return
+    async with processing_semaphore:
+        raw_paths = []
+        job_dir = os.path.join(WORK_DIR, os.urandom(4).hex())
+        os.makedirs(job_dir, exist_ok=True)
 
-    _active_job_count += 1
-    raw_paths = []
+        try:
+            s.stage = "validating"
+            s.progress = 2
+            if not downloader.is_valid_youtube_url(url):
+                raise ValueError("Invalid YouTube URL. Please paste a valid youtube.com or youtu.be link.")
 
-    try:
-        s.stage = "validating"
-        s.progress = 2
-        if not downloader.is_valid_youtube_url(url):
-            raise ValueError("Invalid YouTube URL. Please paste a valid youtube.com or youtu.be link.")
+            s.stage = "checking duration"
+            s.progress = 3
+            duration = downloader.check_duration(url)
+            s.video_title = url.split("/")[-1]
+            if duration < 30:
+                raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
 
-        s.stage = "downloading"
-        s.progress = 5
-        paths = downloader.download_youtube(url, job_id)
-        raw_paths = [paths["video_path"], paths["audio_path"]]
-        s.video_title = paths.get("title")
-        duration = downloader.get_video_duration(paths["video_path"])
-        if duration < 30:
-            raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
-        if duration > MAX_DURATION_SEC:
-            raise ValueError(
-                f"Video too long ({duration/60:.0f} min). "
-                f"Maximum {MAX_DURATION_SEC//60} minutes. "
-                f"For longer videos, trim to the best section first."
-            )
-        s.progress = 15
+            s.stage = "downloading"
+            s.progress = 5
+            audio_path = os.path.join(job_dir, "audio.wav")
+            downloader.download_audio_only(url, audio_path)
+            raw_paths.append(audio_path)
+            s.progress = 15
 
-        if s.cancelled:
-            return
-
-        s.stage = "transcribing"
-        s.progress = 20
-        loop = asyncio.get_event_loop()
-        transcript = await loop.run_in_executor(None, transcriber.transcribe, paths["audio_path"])
-        s.progress = 45
-
-        if s.cancelled:
-            return
-
-        s.stage = "analyzing"
-        s.progress = 50
-        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
-        agent1_clips = agent1_result.get("clips", [])
-        used_energy_fallback = False
-
-        if agent1_result.get("low_confidence") or len(agent1_clips) < MIN_CLIPS_FOR_GROQ:
-            s.stage = "energy fallback"
-            s.progress = 52
-            energy_clips = quality.detect_energy_clips(paths["audio_path"], duration)
-            if energy_clips:
-                agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
-                used_energy_fallback = True
-
-        if not agent1_clips:
-            raise ValueError("No clips could be identified. Try a different video.")
-
-        s.progress = 55
-
-        if s.cancelled:
-            return
-
-        s.stage = "generating metadata"
-        s.progress = 56
-        simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
-                         "duration": c["duration"], "mood": c.get("mood", "hype")}
-                        for c in agent1_clips]
-        fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
-        agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
-        clips_meta = agent2_result.get("clips", [])
-
-        metadata_lookup = {}
-        for c in clips_meta:
-            cid = c.get("id", "")
-            if cid:
-                metadata_lookup[cid] = c
-        if used_energy_fallback:
-            for c in clips_meta:
-                c["fallback_mode"] = True
-
-        s.progress = 60
-
-        if s.cancelled:
-            return
-
-        output_dir = OUTPUT_DIR / job_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        clip_results = []
-        for i, clip in enumerate(agent1_clips):
             if s.cancelled:
                 return
 
-            clip_id = clip.get("id", f"clip_{i+1:02d}")
-            meta = metadata_lookup.get(clip_id, {})
+            s.stage = "transcribing"
+            s.progress = 20
+            loop = asyncio.get_event_loop()
+            transcript = await loop.run_in_executor(None, transcriber.transcribe, audio_path)
+            s.progress = 50
 
-            clip_start = max(0, clip["start"])
-            clip_end = min(clip["end"], duration)
-            clip_duration = clip_end - clip_start
+            if s.cancelled:
+                return
 
-            if clip_duration < 7:
-                clip_end = min(clip_start + 7, duration)
+            s.stage = "analyzing"
+            s.progress = 52
+            agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+            agent1_clips = agent1_result.get("clips", [])
+            used_energy_fallback = False
+
+            if agent1_result.get("low_confidence") or len(agent1_clips) < MIN_CLIPS_FOR_GROQ:
+                s.stage = "energy fallback"
+                s.progress = 54
+                energy_clips = quality.detect_energy_clips(audio_path, duration)
+                if energy_clips:
+                    agent1_clips = [_energy_clip_to_agent1(ec, i) for i, ec in enumerate(energy_clips)]
+                    used_energy_fallback = True
+
+            if not agent1_clips:
+                raise ValueError("No clips could be identified. Try a different video.")
+
+            s.progress = 56
+
+            if s.cancelled:
+                return
+
+            s.stage = "generating metadata"
+            s.progress = 57
+            simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
+                             "duration": c["duration"], "mood": c.get("mood", "hype")}
+                            for c in agent1_clips]
+            fallback_mode = used_energy_fallback or agent1_result.get("low_confidence", False)
+            agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
+            clips_meta = agent2_result.get("clips", [])
+
+            metadata_lookup = {}
+            for c in clips_meta:
+                cid = c.get("id", "")
+                if cid:
+                    metadata_lookup[cid] = c
+            if used_energy_fallback:
+                for c in clips_meta:
+                    c["fallback_mode"] = True
+
+            caption_hook_lookup = {}
+            for c in agent1_clips:
+                cid = c.get("id", "")
+                ch = c.get("caption_hook", "") or ""
+                caption_hook_lookup[cid] = ch
+
+            s.progress = 60
+
+            if s.cancelled:
+                return
+
+            output_dir_path = Path(OUTPUT_DIR) / job_id
+            output_dir_path.mkdir(parents=True, exist_ok=True)
+
+            clip_results = []
+            for i, clip in enumerate(agent1_clips):
+                if s.cancelled:
+                    return
+
+                clip_id = clip.get("id", f"clip_{i+1:02d}")
+                meta = metadata_lookup.get(clip_id, {})
+                caption_hook = caption_hook_lookup.get(clip_id, "")
+
+                clip_start = max(0, clip["start"])
+                clip_end = min(clip["end"], duration)
                 clip_duration = clip_end - clip_start
-            if clip_duration > 90:
-                clip_end = clip_start + 90
-            if clip_duration < 7:
-                continue
 
-            clip_progress_start = 60
-            clip_progress_range = 25
-            clip_progress = clip_progress_start + int(
-                clip_progress_range * i / max(len(agent1_clips), 1)
-            )
-            s.stage = f"clipping {i+1}/{len(agent1_clips)}"
-            s.progress = clip_progress
+                if clip_duration < 7:
+                    clip_end = min(clip_start + 7, duration)
+                    clip_duration = clip_end - clip_start
+                if clip_duration > 90:
+                    clip_end = clip_start + 90
+                if clip_duration < 7:
+                    continue
 
-            clip_path = clipper.cut_and_crop_clip(
-                paths["video_path"], job_id, i,
-                clip_start, clip_end, str(output_dir)
-            )
+                clip_progress_start = 60
+                clip_progress_range = 25
+                clip_progress = clip_progress_start + int(
+                    clip_progress_range * i / max(len(agent1_clips), 1)
+                )
+                s.stage = f"clipping {i+1}/{len(agent1_clips)}"
+                s.progress = clip_progress
 
-            hook_text = meta.get("hook_text", "").replace("**", "").replace("__", "").replace("*", "")
-            clip_path = subtitler.burn_subtitles(
-                clip_path, transcript, clip_start, clip_end,
-                hook_text=hook_text
-            )
+                section_path = downloader.download_clip_section(url, clip_start, clip_end, os.path.join(job_dir, "section.mp4"), i)
+                raw_paths.append(section_path)
 
-            mood = meta.get("mood") or clip.get("mood", "chill")
-            clip_path = music.mix_music(clip_path, mood)
+                ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", ""))
+                if not ass_path:
+                    ass_path = os.path.join(str(output_dir_path), "subs.ass")
+                    Path(ass_path).write_text("", encoding="utf-8")
 
-            s.stage = f"clipping {i+1}/{len(agent1_clips)}"
-            s.progress = clip_progress_start + int(
-                clip_progress_range * (i + 1) / max(len(agent1_clips), 1)
-            )
+                music_path = music.pick_track(meta.get("mood") or clip.get("mood", "chill"))
 
-            viral_score = meta.get("viral_score") or clip.get("viral_score", 0)
+                final_path = os.path.join(str(output_dir_path), f"clip_{i:02d}.mp4")
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path)
 
-            clip_results.append({
-                "index": i + 1,
-                "id": clip_id,
-                "score": round(viral_score, 1),
-                "viral_score": round(viral_score, 1),
-                "score_breakdown": meta.get("score_breakdown", clip.get("score_breakdown", {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0})),
-                "reason": meta.get("reason") or clip.get("reason", ""),
-                "mood": mood,
-                "duration": round(clip_duration, 1),
-                "path": clip_path,
-                "filename": Path(clip_path).name,
-                "primary_signal": meta.get("primary_signal", ""),
-                "hook_text": hook_text,
-                "title": meta.get("title", ""),
-                "tags": meta.get("tags", []),
-                "caption_instagram": meta.get("caption_instagram", ""),
-                "caption_tiktok": meta.get("caption_tiktok", ""),
-                "caption_youtube": meta.get("caption_youtube", ""),
-                "fallback_mode": fallback_mode or meta.get("fallback_mode", False)
-            })
+                s.stage = f"clipping {i+1}/{len(agent1_clips)}"
+                s.progress = clip_progress_start + int(
+                    clip_progress_range * (i + 1) / max(len(agent1_clips), 1)
+                )
 
-        if not clip_results:
-            raise ValueError("No valid clips could be created from this video. Try a different video.")
+                hook_text = meta.get("hook_text", "").replace("**", "").replace("__", "").replace("*", "")
+                viral_score = meta.get("viral_score") or clip.get("viral_score", 0)
 
-        s.clips = clip_results
-        s.progress = 95
+                clip_results.append({
+                    "index": i + 1,
+                    "id": clip_id,
+                    "score": round(viral_score, 1),
+                    "viral_score": round(viral_score, 1),
+                    "score_breakdown": meta.get("score_breakdown", clip.get("score_breakdown", {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0})),
+                    "reason": meta.get("reason") or clip.get("reason", ""),
+                    "mood": meta.get("mood") or clip.get("mood", "chill"),
+                    "duration": round(clip_duration, 1),
+                    "path": final_path,
+                    "filename": Path(final_path).name,
+                    "primary_signal": meta.get("primary_signal", ""),
+                    "hook_text": hook_text,
+                    "title": meta.get("title", ""),
+                    "tags": meta.get("tags", []),
+                    "caption_instagram": meta.get("caption_instagram", ""),
+                    "caption_tiktok": meta.get("caption_tiktok", ""),
+                    "caption_youtube": meta.get("caption_youtube", ""),
+                    "fallback_mode": fallback_mode or meta.get("fallback_mode", False)
+                })
 
-        metadata_path = output_dir / "metadata.json"
-        metadata_export = []
-        for cr in clip_results:
-            metadata_export.append({
-                "index": cr["index"],
-                "id": cr["id"],
-                "score": cr["score"],
-                "viral_score": cr["viral_score"],
-                "score_breakdown": cr["score_breakdown"],
-                "reason": cr["reason"],
-                "mood": cr["mood"],
-                "duration": cr["duration"],
-                "filename": cr["filename"],
-                "primary_signal": cr["primary_signal"],
-                "hook_text": cr["hook_text"],
-                "title": cr["title"],
-                "tags": cr["tags"],
-                "caption_instagram": cr["caption_instagram"],
-                "caption_tiktok": cr["caption_tiktok"],
-                "caption_youtube": cr["caption_youtube"],
-                "fallback_mode": cr["fallback_mode"]
-            })
-        metadata_path.write_text(json.dumps(metadata_export, indent=2), encoding="utf-8")
-        s.metadata_path = str(metadata_path)
+            if not clip_results:
+                raise ValueError("No valid clips could be created from this video. Try a different video.")
 
-        zip_path = OUTPUT_DIR / f"{job_id}.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for clip in clip_results:
-                clip_file = Path(clip["path"])
-                if clip_file.exists():
-                    zf.write(clip_file, arcname=clip["filename"])
-            if metadata_path.exists():
-                zf.write(metadata_path, arcname="metadata.json")
+            s.clips = clip_results
+            s.progress = 95
 
-        s.download_path = str(zip_path)
-        s.progress = 100
-        s.stage = "done"
+            metadata_path = output_dir_path / "metadata.json"
+            metadata_export = []
+            for cr in clip_results:
+                metadata_export.append({
+                    "index": cr["index"],
+                    "id": cr["id"],
+                    "score": cr["score"],
+                    "viral_score": cr["viral_score"],
+                    "score_breakdown": cr["score_breakdown"],
+                    "reason": cr["reason"],
+                    "mood": cr["mood"],
+                    "duration": cr["duration"],
+                    "filename": cr["filename"],
+                    "primary_signal": cr["primary_signal"],
+                    "hook_text": cr["hook_text"],
+                    "title": cr["title"],
+                    "tags": cr["tags"],
+                    "caption_instagram": cr["caption_instagram"],
+                    "caption_tiktok": cr["caption_tiktok"],
+                    "caption_youtube": cr["caption_youtube"],
+                    "fallback_mode": cr["fallback_mode"]
+                })
+            metadata_path.write_text(json.dumps(metadata_export, indent=2), encoding="utf-8")
+            s.metadata_path = str(metadata_path)
 
-    except Exception as e:
-        if s.cancelled:
-            return
-        s.error = str(e)
-        s.stage = "error"
-        s.progress = 0
-        error_dir = OUTPUT_DIR / job_id
-        if error_dir.exists():
-            shutil.rmtree(error_dir, ignore_errors=True)
-    finally:
-        downloader.cleanup_job_files(raw_paths)
-        _active_job_count -= 1
+            zip_path = OUTPUT_DIR / f"{job_id}.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for clip in clip_results:
+                    clip_file = Path(clip["path"])
+                    if clip_file.exists():
+                        zf.write(clip_file, arcname=clip["filename"])
+                if metadata_path.exists():
+                    zf.write(metadata_path, arcname="metadata.json")
+
+            s.download_path = str(zip_path)
+            s.progress = 100
+            s.stage = "done"
+
+        except Exception as e:
+            if s.cancelled:
+                return
+            s.error = str(e)
+            s.stage = "error"
+            s.progress = 0
+            error_dir = OUTPUT_DIR / job_id
+            if error_dir.exists():
+                shutil.rmtree(error_dir, ignore_errors=True)
+        finally:
+            for p in raw_paths:
+                try:
+                    if os.path.isfile(p):
+                        os.unlink(p)
+                except Exception:
+                    pass
+            try:
+                shutil.rmtree(job_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 def get_clip_path(job_id: str, index: int) -> str | None:
     s = _statuses.get(job_id)

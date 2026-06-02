@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import uvicorn
 
 load_dotenv()
 
@@ -86,3 +87,6 @@ async def download_results(job_id: str):
         filename=f"realmoney_{job_id}.zip",
         headers={"Content-Disposition": f'attachment; filename="realmoney_{job_id}.zip"'}
     )
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

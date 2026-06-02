@@ -16,46 +16,53 @@ def ensure_output_dir():
 def is_valid_youtube_url(url: str) -> bool:
     return bool(VIDEO_REGEX.match(url.strip()))
 
-def _get_video_title(url: str) -> str:
+def check_duration(url: str) -> float:
     result = subprocess.run([
-        YT_DLP, "--print", "title",
+        YT_DLP, "--print", "duration",
         "--no-playlist",
         "--js-runtimes", f"deno:{DENO}",
         url
     ], capture_output=True, text=True, timeout=30)
-    return result.stdout.strip()
+    if result.returncode != 0:
+        raise RuntimeError(f"yt-dlp duration check failed: {result.stderr[:300]}")
+    duration = float(result.stdout.strip() or 0)
+    if duration > 1800:
+        raise ValueError(
+            f"Video too long ({duration/60:.0f} min). "
+            f"Maximum 30 minutes. "
+            f"For longer videos, trim to the best section first."
+        )
+    return duration
 
-def download_youtube(url: str, job_id: str) -> dict:
-    ensure_output_dir()
-    video_title = _get_video_title(url)
-    video_path = OUTPUT_DIR / f"{job_id}_video.mp4"
-    audio_path = OUTPUT_DIR / f"{job_id}_audio.wav"
-
+def download_audio_only(url: str, out_path: str) -> str:
     result = subprocess.run([
-        YT_DLP, "-f", "best[height<=720]",
-        "-o", str(video_path),
-        "--merge-output-format", "mp4",
+        YT_DLP, "-x", "--audio-format", "wav",
+        "--audio-quality", "0",
+        "-o", out_path,
         "--no-playlist",
         "--js-runtimes", f"deno:{DENO}",
         url
     ], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed: {result.stderr[:500]}")
+        raise RuntimeError(f"Audio download failed: {result.stderr[:500]}")
+    return out_path
 
+def download_clip_section(url: str, start: float, end: float, out_path: str, clip_index: int) -> str:
+    output = out_path.replace(".mp4", f"_clip{clip_index}.mp4")
     result = subprocess.run([
-        FFMPEG, "-i", str(video_path),
-        "-vn", "-acodec", "pcm_s16le",
-        "-ar", "16000", "-ac", "1",
-        str(audio_path), "-y"
+        YT_DLP,
+        "--download-sections", f"*{start}-{end}",
+        "--force-keyframes-at-cuts",
+        "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+        "-o", output,
+        "--no-playlist",
+        "--js-runtimes", f"deno:{DENO}",
+        "--merge-output-format", "mp4",
+        url
     ], capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[:1500]}")
-
-    return {
-        "video_path": str(video_path),
-        "audio_path": str(audio_path),
-        "title": video_title or Path(video_path).name
-    }
+        raise RuntimeError(f"Section download failed: {result.stderr[:500]}")
+    return output
 
 def get_video_duration(video_path: str) -> float:
     result = subprocess.run([

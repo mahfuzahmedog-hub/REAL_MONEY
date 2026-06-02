@@ -48,84 +48,259 @@ def _get_next_client():
     idx = next(_key_cycle)
     return Groq(api_key=_api_keys[idx]), idx
 
-_AGENT1_PROMPT = """You are a 2026 viral clip selector for a short-form video pipeline.
+_VIRAL_PROMPT = """You are a viral short-form video editor who deeply understands what performs on Instagram Reels, TikTok, and YouTube Shorts in 2025.
 
-CRITICAL: Return ONLY valid JSON. No markdown. No text outside JSON.
+Your job is to find 3-5 clips from this transcript that will perform well as vertical reels.
 
-2026 ALGORITHM PRIORITY:
-#1 DM SHARES  #2 COMPLETION RATE  #3 SAVES  #4 COMMENTS  #5 LIKES
+A great clip MUST have:
+- A strong HOOK in the first 3 seconds: a surprising stat, bold/controversial claim, emotional peak, or curiosity gap
+- A clear mini arc: setup -> tension/conflict -> payoff or punchline
+- Quotable, shareable language — something people would screenshot or repeat
+- High energy delivery (favor moments the speaker sounds most confident, fast-paced, or emotionally charged)
+- No slow intros, filler words, or topic transitions at the start
 
-==================================================
-CLIP SELECTION
-==================================================
+Scoring criteria (1-10 each):
+- hook_strength: how compelling are the first 3 seconds?
+- retention: will viewers watch to the end?
+- shareability: would someone send this to a friend?
 
-TIER A — always include if present:
-shock, surprise, conflict, clutch moments, big mistakes, comebacks,
-strong emotional reactions, rage, unexpected outcomes
+Also generate:
+- caption_hook: a punchy on-screen text overlay for the first 2 seconds (max 8 words, all caps, no hashtags)
+- mood: one of [hype, chill, emotional, funny, serious]
 
-TIER B — include only if Tier A is scarce:
-strong opinions, fast valuable insight, humor, transformation, high-skill moments
+Respond ONLY with a valid JSON array. No explanation, no markdown, no preamble.
+Format: [{"start": float, "end": float, "hook_strength": int, "retention": int, "shareability": int, "reason": str, "mood": str, "caption_hook": str}]
 
-REJECT if:
-- Needs more than 3 seconds of context to understand
-- Low energy with no payoff
-- Mid-explanation with no hook
-- Only silence, music, or ambient sound
-- Only makes sense to someone watching the full video
+Rules:
+- Each clip must be 15-40 seconds long
+- Do not pick clips that start mid-sentence or mid-thought
+- Prefer clips where total score (hook_strength + retention + shareability) >= 20
+- Return clips sorted by total score descending"""
 
-==================================================
-SCORING — APPLY THIS FORMULA EXACTLY
-==================================================
+def _clip_array_to_agent1_format(clips: list) -> dict:
+    if not clips:
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
-H = Hook Strength (0-100)
-C = Curiosity Gap (0-100)
-P = Payoff Strength (0-100)
-S = Shareability (0-100)
-E = Emotional Impact (0-100)
-R = Rewatch Potential (0-100)
+    normalized = []
+    for i, c in enumerate(clips):
+        hs = int(c.get("hook_strength", 0))
+        rt = int(c.get("retention", 0))
+        sh = int(c.get("shareability", 0))
+        total = hs + rt + sh
+        normalized.append({
+            "id": f"clip_{i+1:02d}",
+            "start": max(0.0, float(c.get("start", 0))),
+            "end": float(c.get("end", 0)),
+            "duration": float(c.get("end", 0)) - max(0.0, float(c.get("start", 0))),
+            "viral_score": round(total * 10 / 3, 1),
+            "score_breakdown": {"H": hs * 10, "C": 0, "P": rt * 10, "S": sh * 10, "E": 0, "R": 0},
+            "tier": "A" if total >= 25 else "B",
+            "mood": _normalize_mood(c.get("mood", "")),
+            "reason": c.get("reason", "Viral moment"),
+            "caption_hook": c.get("caption_hook", "")
+        })
 
-VIRAL_SCORE = (H*0.30)+(C*0.15)+(P*0.25)+(S*0.15)+(E*0.10)+(R*0.05)
+    high_enough = sum(1 for c in normalized if c["viral_score"] >= 20)
+    low_confidence = high_enough < 3
 
-THRESHOLD RULES:
-- Only return clips with viral_score above 75
-- If fewer than 3 clips score above 75, lower threshold to 60
-- If still fewer than 3, return all found and set low_confidence: true
-- Minimum clip length: 7 seconds
-- Maximum clip length: 90 seconds
-- Sweet spot: 15-45 seconds
-- Never cut mid-sentence
-
-==================================================
-VALID MOOD VALUES
-==================================================
-
-Use ONLY one of: "chill", "hype", "emotional", "funny", "serious"
-Base mood on the emotional tone of the clip content.
-
-==================================================
-OUTPUT SCHEMA — RETURN ONLY THIS JSON
-==================================================
-
-{
-  "agent": "1",
-  "low_confidence": false,
-  "clip_count": 0,
-  "clips": [
-    {
-      "id": "clip_01",
-      "start": 0.0,
-      "end": 0.0,
-      "duration": 0.0,
-      "viral_score": 0.0,
-      "score_breakdown": {
-        "H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0
-      },
-      "tier": "A",
-      "mood": "hype",
-      "reason": ""
+    return {
+        "agent": "1",
+        "low_confidence": low_confidence,
+        "clip_count": len(normalized),
+        "clips": normalized
     }
-  ]
-}"""
+
+HARD_RULES = "CRITICAL: Output MUST be valid JSON array only. No markdown, no code fences, no explanation."
+
+def _call_groq(system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool = True):
+    cfg = AGENTS[agent_key]
+
+    num_keys = len(_api_keys) if _api_keys else 1
+    last_error = None
+    for attempt in range(num_keys):
+        client, key_idx = _get_next_client()
+        try:
+            response = client.chat.completions.create(
+                model=cfg["model"],
+                messages=[
+                    {"role": "system", "content": system_prompt + "\n\n" + HARD_RULES},
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=cfg["temperature"],
+                max_tokens=cfg["max_tokens"]
+            )
+        except Exception as e:
+            err_str = str(e)
+            last_error = err_str
+            if "429" in err_str or "413" in err_str:
+                continue
+            raise
+
+        content = response.choices[0].message.content.strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+
+        return _parse_groq_response(content, system_prompt, user_message, agent_key, retry_on_fail)
+
+    raise RuntimeError(f"All Groq API keys exhausted. Last error: {last_error[:200]}")
+
+def _parse_groq_response(content: str, system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool):
+    content = content.strip()
+
+    if not content:
+        raise ValueError("AI returned empty response")
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        if not retry_on_fail:
+            raise ValueError(f"AI returned invalid JSON: {str(e)[:200]}")
+        cfg = AGENTS[agent_key]
+        client, _ = _get_next_client()
+        response = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[
+                {"role": "system", "content": system_prompt + "\n\nCRITICAL: You MUST return ONLY valid JSON. No explanation, no markdown, no code fences."},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1,
+            max_tokens=cfg["max_tokens"]
+        )
+        content = response.choices[0].message.content.strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+        return json.loads(content)
+
+def _chunk_transcript(transcript: list, chunk_chars: int = 12000) -> list:
+    if not transcript:
+        return []
+    full_text = "\n".join(
+        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}"
+        for s in transcript
+    )
+    if len(full_text) <= chunk_chars:
+        return [transcript]
+
+    chunks = []
+    chunk_segs = []
+    chunk_len = 0
+    overlap_chars = int(chunk_chars * 0.2)
+
+    i = 0
+    while i < len(transcript):
+        seg = transcript[i]
+        line = f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}\n"
+        chunk_segs.append(seg)
+        chunk_len += len(line)
+
+        if chunk_len >= chunk_chars:
+            chunks.append(chunk_segs[:])
+            overlap_len = 0
+            j = len(chunk_segs) - 1
+            while j >= 0 and overlap_len < overlap_chars:
+                back_line = f"[{chunk_segs[j]['start']:.1f}s - {chunk_segs[j]['end']:.1f}s] {chunk_segs[j]['text']}\n"
+                overlap_len += len(back_line)
+                j -= 1
+            overlap_start = j + 1
+            chunk_segs = chunk_segs[overlap_start:]
+            chunk_len = sum(
+                len(f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}\n")
+                for s in chunk_segs
+            )
+        i += 1
+
+    if chunk_segs:
+        chunks.append(chunk_segs)
+
+    return chunks
+
+def _format_transcript(transcript: list, max_chars: int = 15000) -> str:
+    text = "\n".join(
+        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}"
+        for s in transcript
+    )
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n...[truncated]"
+    return text
+
+def analyze_transcript_agent1(
+    transcript: list, duration: float,
+    niche: str = "general", platform: str = "all"
+) -> dict:
+
+    if not transcript:
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
+
+    from .transcriber import filter_segments
+    transcript_text = filter_segments(transcript, max_chars=6000)
+
+    if not transcript_text.strip():
+        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
+
+    chunks = _chunk_transcript(transcript, chunk_chars=12000)
+
+    all_raw_clips = []
+    any_failed = False
+
+    for chunk in chunks:
+        chunk_text = filter_segments(chunk, max_chars=6000)
+        user_message = (
+            f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}"
+            f"\n\nTRANSCRIPT:\n{chunk_text}"
+        )
+        try:
+            data = _call_groq(_VIRAL_PROMPT, user_message, "clip_finder")
+        except Exception:
+            any_failed = True
+            continue
+
+        if isinstance(data, list):
+            all_raw_clips.extend(data)
+        elif isinstance(data, dict) and "clips" in data:
+            all_raw_clips.extend(data["clips"])
+
+    if not all_raw_clips:
+        all_raw_clips = [
+            {"start": max(0, duration * 0.1 * i), "end": min(duration, duration * 0.1 * (i + 2)),
+             "hook_strength": 5, "retention": 5, "shareability": 5,
+             "reason": "Energy-based fallback", "mood": "hype", "caption_hook": "TOP MOMENT"}
+            for i in range(3)
+        ]
+        any_failed = True
+
+    result = _clip_array_to_agent1_format(all_raw_clips)
+
+    if any_failed and result.get("clip_count", 0) < 3:
+        result["low_confidence"] = True
+
+    clips = result.get("clips", [])
+    clips.sort(key=lambda x: x.get("start", 0))
+    deduped = []
+    for c in clips:
+        overlap = False
+        for d in deduped:
+            if c["start"] < d["end"] and c["end"] > d["start"]:
+                overlap_dur = min(c["end"], d["end"]) - max(c["start"], d["start"])
+                if overlap_dur / max(c["end"] - c["start"], 1) > 0.5:
+                    if c["viral_score"] > d["viral_score"]:
+                        deduped.remove(d)
+                        deduped.append(c)
+                    overlap = True
+                    break
+        if not overlap:
+            deduped.append(c)
+
+    deduped.sort(key=lambda x: x["viral_score"], reverse=True)
+    deduped = deduped[:8]
+    for i, c in enumerate(deduped):
+        c["id"] = f"clip_{i+1:02d}"
+
+    return {
+        "agent": "1",
+        "low_confidence": result["low_confidence"],
+        "clip_count": len(deduped),
+        "clips": deduped
+    }
 
 _AGENT2_PROMPT = """==================================================
 SYSTEM IDENTITY
@@ -383,228 +558,9 @@ Before returning output verify every clip passes ALL of these:
 - viral_score matches the formula output exactly
 """
 
-HARD_RULES = "CRITICAL: Output MUST be valid JSON only. No markdown, no code fences, no explanation. Never invent timestamps not in the transcript. If transcript is empty return: {\"agent\": \"1\", \"low_confidence\": true, \"clip_count\": 0, \"clips\": []}"
-
-def _format_transcript(transcript: list, max_chars: int = 15000) -> str:
-    text = "\n".join(
-        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}"
-        for s in transcript
-    )
-    if len(text) > max_chars:
-        text = text[:max_chars] + "\n...[truncated]"
-    return text
-
-def _chunk_transcript(transcript: list, chunk_chars: int = 12000) -> list:
-    """
-    Split long transcripts into overlapping chunks.
-    Each chunk overlaps by 20% with the next to avoid cutting mid-context.
-    Returns list of transcript segment lists.
-    """
-    if not transcript:
-        return []
-
-    full_text = "\n".join(
-        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}"
-        for s in transcript
-    )
-
-    if len(full_text) <= chunk_chars:
-        return [transcript]
-
-    chunks = []
-    chunk_segs = []
-    chunk_len = 0
-    overlap_chars = int(chunk_chars * 0.2)
-
-    i = 0
-    while i < len(transcript):
-        seg = transcript[i]
-        line = f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}\n"
-        chunk_segs.append(seg)
-        chunk_len += len(line)
-
-        if chunk_len >= chunk_chars:
-            chunks.append(chunk_segs[:])
-            # backtrack by overlap amount for next chunk
-            overlap_len = 0
-            j = len(chunk_segs) - 1
-            while j >= 0 and overlap_len < overlap_chars:
-                back_line = f"[{chunk_segs[j]['start']:.1f}s - {chunk_segs[j]['end']:.1f}s] {chunk_segs[j]['text']}\n"
-                overlap_len += len(back_line)
-                j -= 1
-            overlap_start = j + 1
-            chunk_segs = chunk_segs[overlap_start:]
-            chunk_len = sum(
-                len(f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}\n")
-                for s in chunk_segs
-            )
-
-        i += 1
-
-    if chunk_segs:
-        chunks.append(chunk_segs)
-
-    return chunks
-
-def _call_groq(system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool = True):
-    cfg = AGENTS[agent_key]
-
-    num_keys = len(_api_keys) if _api_keys else 1
-    last_error = None
-    for attempt in range(num_keys):
-        client, key_idx = _get_next_client()
-        try:
-            response = client.chat.completions.create(
-                model=cfg["model"],
-                messages=[
-                    {"role": "system", "content": system_prompt + "\n\n" + HARD_RULES},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=cfg["temperature"],
-                max_tokens=cfg["max_tokens"]
-            )
-        except Exception as e:
-            err_str = str(e)
-            last_error = err_str
-            if "429" in err_str or "413" in err_str:
-                continue
-            raise
-
-        content = response.choices[0].message.content.strip()
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-
-        return _parse_groq_response(content, system_prompt, user_message, agent_key, retry_on_fail)
-
-    raise RuntimeError(f"All Groq API keys exhausted. Last error: {last_error[:200]}")
-
-def _parse_groq_response(content: str, system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool):
-    content = content.strip()
-
-    if not content:
-        raise ValueError("AI returned empty response")
-
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError as e:
-        if not retry_on_fail:
-            raise ValueError(f"AI returned invalid JSON: {str(e)[:200]}")
-        cfg = AGENTS[agent_key]
-        client, _ = _get_next_client()
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": system_prompt + "\n\nCRITICAL: You MUST return ONLY valid JSON. No explanation, no markdown, no code fences."},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1,
-            max_tokens=cfg["max_tokens"]
-        )
-        content = response.choices[0].message.content.strip()
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-        return json.loads(content)
-
-def analyze_transcript_agent1(
-    transcript: list, duration: float,
-    niche: str = "general", platform: str = "all"
-) -> dict:
-
-    if not transcript:
-        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
-
-    transcript_text = _format_transcript(transcript)
-    if not transcript_text.strip():
-        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
-
-    # Chunk long transcripts instead of truncating
-    chunks = _chunk_transcript(transcript, chunk_chars=12000)
-
-    all_clips = []
-    any_low_confidence = False
-
-    for chunk in chunks:
-        chunk_text = _format_transcript(chunk, max_chars=13000)
-        user_message = (
-            f"NICHE: {niche}\nPLATFORM: {platform}\nDURATION: {duration:.0f}"
-            f"\n\nTRANSCRIPT:\n{chunk_text}"
-        )
-        try:
-            data = _call_groq(_AGENT1_PROMPT, user_message, "clip_finder")
-        except Exception:
-            any_low_confidence = True
-            continue
-
-        if not isinstance(data, dict):
-            any_low_confidence = True
-            continue
-
-        if data.get("low_confidence"):
-            any_low_confidence = True
-
-        clips = data.get("clips", [])
-        all_clips.extend(clips)
-
-    if not all_clips:
-        return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
-
-    # Deduplicate clips that overlap across chunks
-    all_clips.sort(key=lambda x: float(x.get("start", 0)))
-    deduped = []
-    for c in all_clips:
-        overlap = False
-        for d in deduped:
-            c_start = float(c.get("start", 0))
-            c_end = float(c.get("end", 0))
-            d_start = float(d.get("start", 0))
-            d_end = float(d.get("end", 0))
-            if c_start < d_end and c_end > d_start:
-                overlap_dur = min(c_end, d_end) - max(c_start, d_start)
-                if overlap_dur / max(c_end - c_start, 1) > 0.5:
-                    overlap = True
-                    # Keep the higher scored clip
-                    if float(c.get("viral_score", 0)) > float(d.get("viral_score", 0)):
-                        deduped.remove(d)
-                        deduped.append(c)
-                    break
-        if not overlap:
-            deduped.append(c)
-
-    normalized = []
-    for i, c in enumerate(deduped):
-        normalized.append({
-            "id": c.get("id", f"clip_{i+1:02d}"),
-            "start": max(0.0, float(c.get("start", 0))),
-            "end": float(c.get("end", 0)),
-            "duration": float(c.get("duration", 0)),
-            "viral_score": float(c.get("viral_score", 0)),
-            "score_breakdown": c.get(
-                "score_breakdown",
-                {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0}
-            ),
-            "tier": c.get("tier", "B"),
-            "mood": _normalize_mood(c.get("mood", "")),
-            "reason": c.get("reason", "Viral moment")
-        })
-
-    normalized.sort(key=lambda x: x["viral_score"], reverse=True)
-    # Cap at top 8 across all chunks
-    normalized = normalized[:8]
-    # Re-ID sequentially
-    for i, c in enumerate(normalized):
-        c["id"] = f"clip_{i+1:02d}"
-
-    low_confidence = any_low_confidence and len(normalized) < 3
-
-    return {
-        "agent": "1",
-        "low_confidence": low_confidence,
-        "clip_count": len(normalized),
-        "clips": normalized
-    }
-
 def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False) -> dict:
-    transcript_text = _format_transcript(transcript)
+    from .transcriber import filter_segments
+    transcript_text = filter_segments(transcript, max_chars=6000)
 
     user_message = f"NICHE: {niche}\nFALLBACK_MODE: {str(fallback_mode).lower()}\nCLIPS: {json.dumps(clips)}\n\nTRANSCRIPT:\n{transcript_text}"
 
