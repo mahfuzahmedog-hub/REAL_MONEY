@@ -14,6 +14,14 @@ from .download import downloader, transcriber, windowed
 from .analyze import ai_analyzer, quality, subtitler
 from .render import clipper, music
 from .render import look
+from .verify import (
+    verify_clip as verify_clip_safety,
+    build_report,
+    write_report,
+    write_manual_review_segments,
+    ClipVerification,
+    VerificationReport,
+)
 
 _log_start = time.time()
 
@@ -156,7 +164,7 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "caption_hook": ""
     }
 
-async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode: bool = False, brand_text: str = ""):
+async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode: bool = False, brand_text: str = ""):
     s = PipelineStatus()
     s.job_id = job_id
     _statuses[job_id] = s
@@ -325,7 +333,8 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             s.stage = "generating metadata"
             s.progress = 57
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
-                             "duration": c["duration"], "mood": c.get("mood", "hype")}
+                             "duration": c["duration"], "mood": c.get("mood", "scholarly"),
+                             "pillar": c.get("pillar", "REMINDER")}
                             for c in agent1_clips]
             fallback_mode = used_energy_fallback or (not transcript)
             agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
@@ -352,6 +361,49 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 cid = c.get("id", "")
                 if cid and c.get("hook_text"):
                     caption_hook_lookup[cid] = c["hook_text"]
+
+            _log(f"Stage 6.5/8: Running theological safety verification...")
+            s.stage = "theological verification"
+            s.progress = 59
+            clip_verifications = []
+            for c in clips_meta:
+                cid = c.get("id", "")
+                if not cid:
+                    continue
+                cv = verify_clip_safety(
+                    clip_id=cid,
+                    transcript=transcript,
+                    clip_start=float(c.get("start", 0)),
+                    clip_end=float(c.get("end", 0)),
+                    mood=c.get("mood", "scholarly"),
+                    hook_text=c.get("hook_text", "") or c.get("title", ""),
+                    title=c.get("title", ""),
+                    tags=c.get("tags", []),
+                    captions={
+                        "instagram": c.get("caption_instagram", ""),
+                        "tiktok": c.get("caption_tiktok", ""),
+                        "youtube": c.get("caption_youtube", ""),
+                    },
+                )
+                clip_verifications.append(cv)
+                if cv.needs_manual_review:
+                    c["needs_manual_review"] = True
+                    c["verification_reasons"] = cv.reasons
+                    _log(f"    [FLAG] {cid}: {cv.reasons[:3]}")
+                else:
+                    _log(f"    [OK] {cid}: {cv.detected_pillar} ({cv.language_detected})")
+
+            report = build_report(job_id, clip_verifications)
+            output_dir_path = Path(OUTPUT_DIR) / job_id
+            output_dir_path.mkdir(parents=True, exist_ok=True)
+            report_path = write_report(report, output_dir_path)
+            flagged = [cv for cv in clip_verifications if cv.needs_manual_review]
+            review_path = write_manual_review_segments(flagged, output_dir_path)
+            _log(f"Verification: {report.passed_clips}/{report.total_clips} passed, {report.flagged_clips} flagged")
+            if report_path:
+                _log(f"  Report: {report_path}")
+            if review_path:
+                _log(f"  Manual review: {review_path}")
 
             s.progress = 60
 

@@ -18,15 +18,72 @@ AGENTS = {
     }
 }
 
-VALID_MOODS = {"chill", "hype", "emotional", "funny", "serious"}
+VALID_MOODS = {"reflective", "motivational", "peaceful", "scholarly", "devotional"}
+
+ISLAMIC_PILLARS = [
+    "QURAN_VERSE",
+    "HADITH",
+    "DUA",
+    "REMINDER",
+    "STORY_OF_PROPHET",
+    "STORY_OF_COMPANION",
+    "SCHOLAR_QUOTE",
+    "ISLAMIC_LIFESTYLE",
+]
+
+ISLAMIC_HOOK_FORMULAS = {
+    "QURAN_OPENER": "Allah says: {verse_excerpt}...",
+    "HADITH_OPENER": "The Prophet ﷺ said: {hadith_excerpt}...",
+    "REFLECTION": "Reflect on this: {emotional_truth}...",
+    "REMINDER": "Remember: {core_message}...",
+    "STORY": "They didn't know {till_this_happened}...",
+}
+
+ISLAMIC_BANNED_HOOK_PATTERNS = [
+    r"\bwait\s+for\s+it\b",
+    r"\bwatch\s+till\s+the\s+end\b",
+    r"\bthis\s+is\s+crazy\b",
+    r"\bmind\s+blown\b",
+    r"\bgoing\s+viral\b",
+    r"\bsubscribe\b",
+    r"\blike\s+and\s+subscribe\b",
+    r"\blike\s+if\s+you\s+agree\b",
+    r"\bfollow\s+for\s+more\b",
+    r"\bhey\s+guys\b",
+    r"\bso\s+today\b",
+    r"\bin\s+this\s+video\b",
+    r"\bfunny\b",
+    r"\bcomedy\b",
+    r"\bcomedic\b",
+    r"\bhilarious\b",
+    r"\blaugh\b",
+    r"\blaughs\b",
+    r"\blaughed\b",
+    r"\blaughter\b",
+    r"\bbeat\s+drop\b",
+    r"\bvibe\b",
+    r"\binstrumental\b",
+    r"\bedm\b",
+    r"\bmukbang\b",
+]
+
 
 def _normalize_mood(mood: str, niche: str = "") -> str:
-    if not mood or mood.lower() not in VALID_MOODS:
-        mood = "hype"
-    mood = mood.lower()
-    if niche == "comedy" and mood in ("chill", "serious"):
-        return "funny"
-    return mood
+    if not mood:
+        return "scholarly"
+    mood = mood.lower().strip()
+    if mood in VALID_MOODS:
+        return mood
+    legacy_to_islamic = {
+        "hype": "motivational",
+        "chill": "peaceful",
+        "emotional": "devotional",
+        "funny": "scholarly",
+        "serious": "scholarly",
+    }
+    if mood in legacy_to_islamic:
+        return legacy_to_islamic[mood]
+    return "scholarly"
 
 _api_keys = []
 _key_cycle = None
@@ -47,41 +104,70 @@ def _load_keys():
             "GROQ_API_KEY is no longer used."
         )
 
-_VIRAL_PROMPT = """You are a viral short-form video editor who deeply understands what performs on Instagram Reels, TikTok, and YouTube Shorts in 2025.
+_VIRAL_PROMPT = """You are a short-form video editor for Islamic Hedayet, an Instagram page sharing Islamic reminders, Quran verses, hadith, and scholar quotes. You understand what performs on Instagram Reels, TikTok, and YouTube Shorts in 2026.
 
-Your job is to find 3-5 clips from this transcript that will perform well as vertical reels.
+Your job is to find 3-5 clips from this transcript that will perform well as vertical reels for Muslim audiences seeking authentic Islamic content.
 
-A great clip MUST have:
-- A strong HOOK in the first 3 seconds: a surprising stat, bold/controversial claim, emotional peak, curiosity gap, or provocative statement
-- A clear mini arc: setup -> tension/conflict -> payoff or punchline
-- Quotable, shareable language — something people would screenshot or repeat
-- High energy delivery (favor moments the speaker sounds most confident, fast-paced, or emotionally charged)
-- No slow intros, filler words, or topic transitions at the start
+A great Islamic clip MUST have:
+- A strong HOOK in the first 3 seconds that creates reflection, curiosity, or emotional pull
+- A clear mini arc: setup -> reflection/reminder -> takeaway or du'a
+- Quotable, shareable language (something people would send to family, save, or comment "SubhanAllah")
+- A spiritually meaningful moment: Quran verse, hadith, scholar quote, dua, or powerful reflection
+- Content that builds iman (faith), increases taqwa (God-consciousness), or reminds of akhira (hereafter)
+- No slow intros, no rambling transitions
 
-For COMEDY content specifically:
-- Favor clips with a clear setup and punchline structure
-- The punchline should be in the last 5 seconds of the clip
-- Look for callbacks, running jokes, or observations the audience reacted to
-- caption_hook should be the provocative premise or setup, not the punchline
-- Score punchlines that get audience laughter higher on retention and shareability
+THEOLOGICAL SAFETY RULES (HARD GATES - violations will be rejected):
+- NEVER invent or fabricate Quran verses. If you reference a verse, use real surah:ayah from the verified DB
+- NEVER invent or fabricate hadith. If you reference a hadith, use real collection+number from the verified DB
+- NEVER generate Arabic Quran or Hadith text directly. The Arabic text is rendered separately from the verified DB
+- NEVER use music, beat drops, or instrumental references. This page uses vocal nasheeds and Quran recitation only
+- NEVER use comedy/punchline structure. This is NOT a comedy page
+
+ISLAMIC HOOK FORMULAS (use one per clip):
+- QURAN_OPENER: "Allah says: {verse excerpt}..." (real verse only)
+- HADITH_OPENER: "The Prophet ﷺ said: {hadith excerpt}..." (real hadith only)
+- REFLECTION: a thoughtful question or observation that prompts reflection
+- REMINDER: a short, direct reminder of faith, prayer, gratitude, or patience
+- STORY: a brief story of a Prophet, Companion, or righteous person
+
+VALID MOODS (pick exactly one per clip):
+- reflective: thoughtful, contemplative content (e.g., Quran reflection)
+- motivational: energizing, action-prompting (e.g., "don't give up, keep praying")
+- peaceful: calm, serene (e.g., dhikr, nature + recitation)
+- scholarly: educational, lecture-based (e.g., fiqh explanation, tafsir)
+- devotional: worship-focused (e.g., dua, salah tips, Quran recitation)
+
+CONTENT PILLARS (pick exactly one per clip, indicates the type of content):
+- QURAN_VERSE: clip is centered on a Quran verse
+- HADITH: clip is centered on a hadith
+- DUA: clip is centered on a dua/supplication
+- REMINDER: general reminder, lecture, or reflection
+- STORY_OF_PROPHET: story of a Prophet
+- STORY_OF_COMPANION: story of a Sahabi
+- SCHOLAR_QUOTE: quote from a known Islamic scholar
+- ISLAMIC_LIFESTYLE: practice, etiquette, or lifestyle guidance
 
 Scoring criteria (1-10 each):
-- hook_strength: how compelling are the first 3 seconds?
-- retention: will viewers watch to the end?
-- shareability: would someone send this to a friend?
+- hook_strength: how compelling are the first 3 seconds for a Muslim audience?
+- retention: will viewers watch to the end (often saves, comments, shares)?
+- shareability: would a Muslim send this to family/WhatsApp group?
 
 Also generate:
-- caption_hook: a punchy on-screen text overlay for the first 2 seconds (max 8 words, all caps, no hashtags)
-- mood: one of [hype, chill, emotional, funny, serious]
+- caption_hook: a punchy on-screen text overlay for the first 2 seconds (max 8 words, Islamic-friendly, no hashtags, no "subscribe", no "like if you agree")
+- mood: one of [reflective, motivational, peaceful, scholarly, devotional]
+- pillar: one of the 8 content pillars above
+- reference_claim: if the clip mentions a specific Quran verse or hadith, include the reference EXACTLY as it appears in the transcript (e.g., "Quran 2:255" or "Bukhari 1"). If no specific reference, leave empty string. DO NOT INVENT REFERENCES.
 
 Respond ONLY with a valid JSON array. No explanation, no markdown, no preamble.
-Format: [{"start": float, "end": float, "hook_strength": int, "retention": int, "shareability": int, "reason": str, "mood": str, "caption_hook": str}]
+Format: [{"start": float, "end": float, "hook_strength": int, "retention": int, "shareability": int, "reason": str, "mood": str, "pillar": str, "caption_hook": str, "reference_claim": str}]
 
 Rules:
 - Each clip must be 15-40 seconds long
 - Do not pick clips that start mid-sentence or mid-thought
 - Prefer clips where total score (hook_strength + retention + shareability) >= 20
-- Return clips sorted by total score descending"""
+- Return clips sorted by total score descending
+- If the transcript contains Arabic, the first 3 seconds should often start with the Arabic (for the dual-frame overlay)
+"""
 
 def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
     if not clips:
@@ -93,6 +179,9 @@ def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
         rt = int(c.get("retention", 0))
         sh = int(c.get("shareability", 0))
         total = hs + rt + sh
+        pillar = c.get("pillar", "REMINDER")
+        if pillar not in ISLAMIC_PILLARS:
+            pillar = "REMINDER"
         normalized.append({
             "id": f"clip_{i+1:02d}",
             "start": max(0.0, float(c.get("start", 0))),
@@ -102,8 +191,10 @@ def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
             "score_breakdown": {"H": hs * 10, "C": 0, "P": rt * 10, "S": sh * 10, "E": 0, "R": 0},
             "tier": "A" if total >= 25 else "B",
             "mood": _normalize_mood(c.get("mood", ""), niche),
-            "reason": c.get("reason", "Viral moment"),
-            "caption_hook": c.get("caption_hook", "")
+            "pillar": pillar,
+            "reason": c.get("reason", "Meaningful Islamic moment"),
+            "caption_hook": c.get("caption_hook", ""),
+            "reference_claim": c.get("reference_claim", ""),
         })
 
     high_enough = sum(1 for c in normalized if c["viral_score"] >= 20)
@@ -294,13 +385,25 @@ _AGENT2_PROMPT = """==================================================
 SYSTEM IDENTITY
 ==================================================
 
-You are a clip metadata generator for a short-form video pipeline.
-You receive either a real transcript with timestamps OR a signal 
-that no usable transcript exists.
+You are a clip metadata generator for Islamic Hedayet, an Instagram page sharing authentic Islamic content (Quran verses, hadith, dua, scholar reminders, Islamic lifestyle).
+
+You receive either a real transcript with timestamps OR a signal that no usable transcript exists.
 
 Your output is parsed directly by Python.
-Return ONLY valid JSON. No markdown. No explanation. No text outside 
-the JSON block. Ever.
+Return ONLY valid JSON. No markdown. No explanation. No text outside the JSON block. Ever.
+
+==================================================
+THEOLOGICAL SAFETY (HARD GATES)
+==================================================
+
+NEVER, under any circumstance:
+- Generate Arabic Quran text directly. Arabic Quran text is rendered from the verified DB separately.
+- Generate Arabic Hadith text directly. Arabic Hadith text is rendered from the verified DB separately.
+- Fabricate a specific Quran reference (e.g., "Quran 99:99" or "Surah 12:999"). If the transcript mentions a real reference, copy it exactly.
+- Fabricate a specific hadith reference (e.g., "Bukhari 9999" or "Sahih Muslim 12345"). If the transcript mentions a real reference, copy it exactly.
+- Reference music, beats, drops, or instruments. The page is vocal-only (Quran recitation + nasheeds).
+- Use comedy/punchline/joke language. This is NOT a comedy page.
+- Claim a verse is from a specific surah/ayah unless the transcript EXPLICITLY says so.
 
 ==================================================
 PIPELINE CONTEXT
@@ -315,8 +418,8 @@ You do NOT invent content that isn't in the transcript.
 
 If the transcript is empty, unusable, or music-only:
 - Set fallback_mode: true for ALL clips
-- Generate metadata based ONLY on mood + niche label provided
-- Never invent specific events, mistakes, or statements
+- Generate metadata based ONLY on mood + pillar + niche label provided
+- Never invent specific events, verses, hadith, or statements
 - Never fabricate hook text that references things you cannot verify
 
 ==================================================
@@ -325,10 +428,10 @@ If the transcript is empty, unusable, or music-only:
 
 Every metadata field must serve one of these signals in order:
 
-#1 DM SHARES — "send this to [someone]" content
+#1 DM SHARES — "send this to family/WhatsApp" content
 #2 COMPLETION RATE — impossible to stop watching
-#3 SAVES — "I'll need this later" content
-#4 COMMENTS — sparks debate or response
+#3 SAVES — "I'll need this later / bookmark for reflection" content
+#4 COMMENTS — sparks "SubhanAllah", "Allahu Akbar", or sincere debate
 #5 LIKES — ignore, do not optimize for this
 
 ==================================================
@@ -363,22 +466,21 @@ PRIMARY SIGNAL RULES
 
 Assign exactly ONE per clip from this list only:
 
-SHARE BAIT -> viewer thinks "I need to send this to [person]"
-SAVE BAIT -> viewer thinks "I'll need this later"
-COMMENT BAIT -> viewer wants to respond or debate
+SHARE BAIT -> viewer thinks "I need to send this to family/WhatsApp"
+SAVE BAIT -> viewer thinks "I'll bookmark this for later reflection"
+COMMENT BAIT -> viewer wants to respond (SubhanAllah, reflection, dua request)
 COMPLETION BAIT -> viewer cannot stop watching mid-way
 LOOP BAIT -> last frame flows naturally back to first frame
 
 Base this on actual transcript content.
-If fallback_mode is true, base this on mood + niche only.
+If fallback_mode is true, base this on mood + pillar only.
 
 Mood -> Signal mapping for fallback:
-- hype / energetic -> COMPLETION BAIT
-- funny / comedy -> SHARE BAIT
-- chill / ambient -> LOOP BAIT
-- serious / dramatic -> COMMENT BAIT
-- educational -> SAVE BAIT
-- shocking -> SHARE BAIT
+- motivational / energizing -> SHARE BAIT
+- reflective / contemplative -> SAVE BAIT
+- peaceful / serene -> LOOP BAIT
+- scholarly / educational -> SAVE BAIT
+- devotional / worship -> SHARE BAIT
 
 ==================================================
 HOOK TEXT RULES
@@ -386,62 +488,57 @@ HOOK TEXT RULES
 
 HARD RULES:
 - Maximum 8 words
-- Must create open loop or unresolved tension
+- Must create open loop or unresolved reflection
 - Must work without sound (text on screen only)
 - Never reference events you cannot verify from transcript
-- Never use banned phrases (list below)
-
-BANNED PHRASES - never use any of these:
-"Wait for it"
-"Watch till the end"
-"Hey guys"
-"So today"
-"In this video"
-"Like if you agree"
-"Follow for more"
-"Like and subscribe"
-"This is crazy"
-"You won't believe this"
-"Mind blown"
-"I'm going to die" (unless directly quoted from real transcript)
+- NEVER use these phrases (Islamic content is serious, not clickbait):
+  "wait for it", "watch till the end", "this is crazy", "mind blown",
+  "subscribe", "like and subscribe", "like if you agree", "follow for more",
+  "hey guys", "so today", "in this video", "going viral", "you won't believe",
+  "funny", "comedy", "lol", "lmao", "hilarious"
 
 IF FALLBACK MODE (no transcript):
-Hook must be mood/niche-based only.
-Format: [emotion] + [niche] + [open question or tension]
+Hook must be mood + pillar-based only.
+Format: [emotion word] + [spiritual action] + [open reflection]
 
-Examples by mood:
-- hype + gaming -> "This moment changed everything in the game"
-- chill + music -> "When the drop hits different at 2am"
-- serious + finance -> "Nobody talks about this money mistake"
-- funny + comedy -> "Bro really said that with his whole chest"
-- funny + comedy -> "The AUDACITY is actually impressive"
-- funny + comedy -> "Not them doing this in front of everyone"
-- funny + comedy -> "This caught me so off guard"
-- funny + comedy -> "Why is this so accurate though"
-- funny + comedy -> "The way he said it has me dead"
-- emotional + comedy -> "This part actually hit different"
-- serious + comedy -> "Wait that's actually a good point"
-- hype + comedy -> "The energy shift was CRAZY"
+Examples by mood/pillar (Islamic only):
+- reflective + QURAN_VERSE -> "Reflect on this verse daily"
+- reflective + HADITH -> "The Prophet ﷺ reminded us of this"
+- motivational + REMINDER -> "Your heart needs this reminder"
+- motivational + ISLAMIC_LIFESTYLE -> "Start doing this today"
+- peaceful + DUA -> "Make this dua before sleeping"
+- peaceful + QURAN_VERSE -> "The verse that calms the heart"
+- scholarly + HADITH -> "A hadith you should know"
+- scholarly + ISLAMIC_LIFESTYLE -> "Did you know this about wudu?"
+- devotional + QURAN_VERSE -> "Recite this in every prayer"
+- devotional + DUA -> "The dua that opens doors"
 
 IF REAL TRANSCRIPT:
 Hook must reference an actual moment from the transcript.
 Quote or paraphrase real content - never invent.
+NEVER translate or paraphrase Arabic verses — Arabic verses are rendered separately.
 
 ==================================================
 TITLE RULES
 ==================================================
 
 - Maximum 60 characters
-- Outcome-first or curiosity gap structure
+- Outcome-first or reflection-first structure
 - Must make sense without watching the video
-- SEO-friendly: include a searchable keyword
-- Never generic: "The Powerful Mistake" or "Confusion Moment" 
-  are REJECTED - they say nothing specific
+- SEO-friendly: include a searchable Islamic keyword (e.g., "Quran", "Hadith", "Dua", "Reminder")
+- Never generic: "The Powerful Reminder" is REJECTED
+- Include the pillar or scholar name when relevant
+
+Examples of good titles:
+- "The Hadith on Intentions - Sahih Bukhari 1"
+- "Ayat al-Kursi: The Throne Verse Explained"
+- "A Reminder on Patience from Surah Al-Baqarah"
+- "The Dua Before Sleeping - Prophet's Teaching"
 
 IF FALLBACK MODE:
-Title format: [Niche keyword] + [Mood/emotion descriptor]
-Example: "Gaming Highlights: Hype Moments Compilation"
-Not: "The Powerful Mistake" or "Unexpected Start"
+Title format: [Islamic keyword] + [Mood/reflection descriptor]
+Example: "Daily Quran Reminder: Reflect on Allah's Mercy"
+Not: "The Powerful Reminder" or "This Will Change You"
 
 ==================================================
 TAG RULES
@@ -452,39 +549,39 @@ Never use "general" as a tag. Ever.
 Never repeat the same tag across all clips.
 
 Tag structure - include ALL THREE types:
-1. Niche tag (what the video is about): "gaming", "music", "finance"
-2. Emotion tag (how it feels): "hype", "shocking", "satisfying", "funny"
-3. Format tag (what kind of clip): "highlight", "reaction", "tutorial", "compilation"
+1. Niche tag (Islamic content type): "quran", "hadith", "dua", "reminder", "islamiclifestyle"
+2. Emotion tag (how it feels): "reflective", "peaceful", "motivational", "devotional", "scholarly"
+3. Format tag (what kind of clip): "lecture", "recitation", "reflection", "qa", "story"
 
-Example good tags: ["gaming", "clutchplay", "hype", "highlight", "viral", "reaction"]
-Example bad tags: ["general", "mistake", "powerful"] -- REJECTED
+Example good tags: ["quran", "reminder", "scholarly", "lecture", "islam", "tafsir", "verseoftheday"]
+Example bad tags: ["general", "powerful", "viral"] -- REJECTED
 
 ==================================================
 CAPTION RULES
 ==================================================
 
-Generate 3 captions per clip. Each must be platform-native.
+Generate 3 captions per clip. Each must be platform-native AND Islamic.
 
 INSTAGRAM:
-- 1-3 sentences, conversational
-- End with a question OR "Send this to [specific person type]"
-- 3-5 relevant hashtags (niche-specific, not #general)
-- Acceptable: "Send this to your squad. What would you do here? #gaming #highlights #viral #fyp #reels"
-- Rejected: "Share this with friends! #general"
+- 1-3 sentences, sincere tone
+- End with a reflection prompt OR "Send this to [family member]" 
+- 3-5 Islamic-specific hashtags (NOT #general, NOT #viral, NOT #fyp)
+- Acceptable: "SubhanAllah. The verse that reminds us of His mercy. Send this to someone who needs it today. #quran #islam #reminder #islamicreminder #deen"
+- Rejected: "Share this with friends! #general #viral"
 
 TIKTOK:
-- 1 sentence max, casual texting tone
-- 1-2 niche-specific hashtags only
-- No formal language, no punctuation overkill
-- Acceptable: "when the beat drops and you're not ready #music #fyp"
-- Rejected: "whoa #general"
+- 1 sentence max, sincere but conversational
+- 1-2 Islamic-specific hashtags only
+- No emojis overload, no clickbait
+- Acceptable: "The verse that calms every anxious heart #quran #islam"
+- Rejected: "wait for it #fyp #viral"
 
 YOUTUBE:
-- First line must contain a searchable keyword
+- First line must contain a searchable Islamic keyword
 - 2-3 sentences
-- Soft engagement prompt at end (NOT "like and subscribe")
-- 3-5 hashtags
-- Acceptable: "Gaming highlight reel featuring the most intense clutch moments. Drop your best play in the comments. #gaming #shorts #highlights"
+- Soft engagement prompt (NOT "like and subscribe")
+- 3-5 Islamic hashtags
+- Acceptable: "Quran reflection on the verse of the throne. A reminder for every believer. Drop a SubhanAllah in the comments. #quran #islam #shorts #islamicreminder #deen"
 - Rejected: "Like if you agree! #general"
 
 ==================================================
@@ -493,9 +590,9 @@ INPUT FORMAT
 
 You will receive:
 
-NICHE: [topic label e.g. gaming / music / finance / fitness]
+NICHE: islamic
 FALLBACK_MODE: [true / false]
-CLIPS: [array of {id, start, end, duration, mood}]
+CLIPS: [array of {id, start, end, duration, mood, pillar}]
 
 TRANSCRIPT: (if available)
 [timestamped transcript]
@@ -523,6 +620,7 @@ Return this exact structure, nothing else:
       },
       "primary_signal": "",
       "mood": "",
+      "pillar": "",
       "reason": "",
       "hook_text": "",
       "title": "",
@@ -544,14 +642,17 @@ Before returning output verify every clip passes ALL of these:
 - hook_text is 8 words or fewer
 - hook_text contains none of the banned phrases
 - title is under 60 characters and actually descriptive
-- tags array has 0 instances of the word "general"
-- tags include at least one niche, one emotion, one format tag
+- title includes an Islamic keyword
+- tags array has 0 instances of the word "general" or "viral"
+- tags include at least one Islamic niche, one emotion, one format tag
 - caption_youtube does NOT contain "like and subscribe" or "like if you agree"
-- caption_tiktok is one sentence, casual, max 2 hashtags
+- caption_tiktok is one sentence, sincere, max 2 hashtags
 - viral_score above 55 only if real transcript was used
 - fallback_mode matches what was passed in input
 - primary_signal is exactly one of the 5 allowed values
 - viral_score matches the formula output exactly
+- mood is one of: reflective, motivational, peaceful, scholarly, devotional
+- pillar is one of: QURAN_VERSE, HADITH, DUA, REMINDER, STORY_OF_PROPHET, STORY_OF_COMPANION, SCHOLAR_QUOTE, ISLAMIC_LIFESTYLE
 """
 
 def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False) -> dict:
@@ -598,6 +699,10 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
         if not isinstance(score_breakdown, dict):
             score_breakdown = {"H": 0, "C": 0, "P": 0, "S": 0, "E": 0, "R": 0}
 
+        pillar = c.get("pillar", "REMINDER")
+        if pillar not in ISLAMIC_PILLARS:
+            pillar = "REMINDER"
+
         normalized.append({
             "id": c.get("id", ""),
             "start": max(0.0, float(c.get("start", 0))),
@@ -610,6 +715,7 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
             "score_breakdown": score_breakdown,
             "primary_signal": c.get("primary_signal", ""),
             "mood": _normalize_mood(c.get("mood", ""), niche),
+            "pillar": pillar,
             "reason": c.get("reason", ""),
             "hook_text": hook_text,
             "title": title,

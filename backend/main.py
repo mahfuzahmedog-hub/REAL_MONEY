@@ -32,7 +32,7 @@ app.add_middleware(
 
 class ProcessRequest(BaseModel):
     url: str
-    niche: str = "general"
+    niche: str = "islamic"
     quick_mode: bool = False
     brand_text: str = ""
 

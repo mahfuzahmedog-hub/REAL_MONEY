@@ -49,7 +49,7 @@ load_dotenv()
 API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
 UI_PORT = int(os.getenv("UI_PORT", "7860"))
 
-NICHES = ["general", "comedy", "tech", "education", "gaming", "motivation", "lifestyle", "news", "music", "fitness"]
+NICHES = ["islamic", "general", "comedy", "tech", "education", "gaming", "motivation", "lifestyle", "news", "music", "fitness"]
 
 POLL_INTERVAL_S = 2.0
 
@@ -142,9 +142,9 @@ def build_clip_urls(payload):
     return items, zip_url
 
 
-with gr.Blocks(title="REAL MONEY - YouTube to Vertical Shorts", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Islamic Hedayet - YouTube to Vertical Shorts", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
-        "# REAL MONEY\n"
+        "# Islamic Hedayet\n"
         "**YouTube to vertical shorts with AI-matched music, burned-in subtitles, "
         "and per-clip viral metadata.**\n\n"
         "Free, local, no subscriptions."
@@ -160,7 +160,7 @@ with gr.Blocks(title="REAL MONEY - YouTube to Vertical Shorts", theme=gr.themes.
                 placeholder="https://www.youtube.com/watch?v=...",
                 lines=1,
             )
-            niche_in = gr.Dropdown(NICHES, value="general", label="Niche (helps metadata generation)")
+            niche_in = gr.Dropdown(NICHES, value="islamic", label="Niche (helps metadata generation)")
             quick_mode_in = gr.Radio(
                 [("Yes (recommended for >20 min videos)", True), ("No (full transcription)", False)],
                 value=True,
