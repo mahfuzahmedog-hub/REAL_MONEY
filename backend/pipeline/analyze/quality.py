@@ -7,7 +7,8 @@ MIN_CLIP_DURATION = 7
 MAX_CLIP_DURATION = 90
 SWEET_SPOT_MIN = 15
 SWEET_SPOT_MAX = 45
-ENERGY_THRESHOLD = 0.05
+ENERGY_THRESHOLD = 0.03
+MIN_CLIP_ENERGY = 0.04
 
 def _load_audio(audio_path: str) -> np.ndarray:
     path = Path(audio_path)

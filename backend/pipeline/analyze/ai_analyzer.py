@@ -19,10 +19,13 @@ AGENTS = {
 
 VALID_MOODS = {"chill", "hype", "emotional", "funny", "serious"}
 
-def _normalize_mood(mood: str) -> str:
+def _normalize_mood(mood: str, niche: str = "") -> str:
     if not mood or mood.lower() not in VALID_MOODS:
-        return "hype"
-    return mood.lower()
+        mood = "hype"
+    mood = mood.lower()
+    if niche == "comedy" and mood in ("chill", "serious"):
+        return "funny"
+    return mood
 
 _api_keys = []
 _key_cycle = None
@@ -84,7 +87,7 @@ Rules:
 - Prefer clips where total score (hook_strength + retention + shareability) >= 20
 - Return clips sorted by total score descending"""
 
-def _clip_array_to_agent1_format(clips: list) -> dict:
+def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
     if not clips:
         return {"agent": "1", "low_confidence": True, "clip_count": 0, "clips": []}
 
@@ -102,7 +105,7 @@ def _clip_array_to_agent1_format(clips: list) -> dict:
             "viral_score": round(total * 10 / 3, 1),
             "score_breakdown": {"H": hs * 10, "C": 0, "P": rt * 10, "S": sh * 10, "E": 0, "R": 0},
             "tier": "A" if total >= 25 else "B",
-            "mood": _normalize_mood(c.get("mood", "")),
+            "mood": _normalize_mood(c.get("mood", ""), niche),
             "reason": c.get("reason", "Viral moment"),
             "caption_hook": c.get("caption_hook", "")
         })
@@ -285,7 +288,7 @@ def analyze_transcript_agent1(
         ]
         any_failed = True
 
-    result = _clip_array_to_agent1_format(all_raw_clips)
+    result = _clip_array_to_agent1_format(all_raw_clips, niche)
 
     if any_failed and result.get("clip_count", 0) < 3:
         result["low_confidence"] = True
@@ -442,7 +445,15 @@ Examples by mood:
 - hype + gaming -> "This moment changed everything in the game"
 - chill + music -> "When the drop hits different at 2am"
 - serious + finance -> "Nobody talks about this money mistake"
-- funny + general -> "This happens every single time"
+- funny + comedy -> "Bro really said that with his whole chest"
+- funny + comedy -> "The AUDACITY is actually impressive"
+- funny + comedy -> "Not them doing this in front of everyone"
+- funny + comedy -> "This caught me so off guard"
+- funny + comedy -> "Why is this so accurate though"
+- funny + comedy -> "The way he said it has me dead"
+- emotional + comedy -> "This part actually hit different"
+- serious + comedy -> "Wait that's actually a good point"
+- hype + comedy -> "The energy shift was CRAZY"
 
 IF REAL TRANSCRIPT:
 Hook must reference an actual moment from the transcript.
@@ -630,7 +641,7 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
             "viral_score": float(c.get("viral_score", 0)),
             "score_breakdown": score_breakdown,
             "primary_signal": c.get("primary_signal", ""),
-            "mood": _normalize_mood(c.get("mood", "")),
+            "mood": _normalize_mood(c.get("mood", ""), niche),
             "reason": c.get("reason", ""),
             "hook_text": hook_text,
             "title": title,
