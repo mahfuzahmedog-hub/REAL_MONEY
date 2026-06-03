@@ -63,9 +63,9 @@ def _health_check() -> str:
         r = requests.get(f"{API_BASE}/health", timeout=3)
         if r.status_code == 200:
             d = r.json()
-            groq = "yes" if d.get("groq_configured") else "NO - check backend/.env"
-            tracks = d.get("music_tracks", {})
-            return f"Backend OK | Groq: {groq} | Music: {tracks.get('hype', 0)} hype / {tracks.get('chill', 0)} chill / {tracks.get('sad', 0)} sad / {tracks.get('tense', 0)} tense"
+            zen = "yes" if d.get("zen_configured") else "NO - check backend/.env"
+
+            return f"Backend OK | Zen: {zen} | Music: {tracks.get('hype', 0)} hype / {tracks.get('chill', 0)} chill / {tracks.get('sad', 0)} sad / {tracks.get('tense', 0)} tense"
         return f"Backend returned {r.status_code}"
     except requests.exceptions.RequestException as e:
         return f"Backend not reachable at {API_BASE}: {e}"

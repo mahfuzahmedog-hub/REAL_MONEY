@@ -2,16 +2,17 @@ import os
 import json
 import re
 import itertools
-from groq import Groq
+import logging
+from .zen_client import call_with_rotation, ZenAllModelsExhausted, ZenError, list_available_models
+
+log = logging.getLogger("ai_analyzer")
 
 AGENTS = {
     "clip_finder": {
-        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
         "temperature": 0.3,
         "max_tokens": 2000
     },
     "metadata_generator": {
-        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
         "temperature": 0.4,
         "max_tokens": 4000
     }
@@ -31,25 +32,20 @@ _api_keys = []
 _key_cycle = None
 
 def _load_keys():
-    global _api_keys, _key_cycle
-    primary = os.getenv("GROQ_API_KEY", "")
-    if primary and primary != "your_new_groq_api_key_here":
-        _api_keys.append(primary)
-    for i in itertools.count(2):
-        k = os.getenv(f"GROQ_API_KEY_{i}")
-        if k:
-            _api_keys.append(k)
-        else:
-            break
-    if not _api_keys:
-        raise ValueError("No GROQ_API_KEY found. Set GROQ_API_KEY in backend/.env")
-    _key_cycle = itertools.cycle(range(len(_api_keys)))
-
-def _get_next_client():
-    if not _api_keys:
-        _load_keys()
-    idx = next(_key_cycle)
-    return Groq(api_key=_api_keys[idx]), idx
+    """
+    Backward-compat shim. We now use OpenCode Zen (single key) but keep this
+    function so older callers that imported it don't break.
+    """
+    has_key = (
+        os.getenv("OPENCODE_API_KEY", "").strip()
+        or os.getenv("OPENCODE_ZEN_API_KEY", "").strip()
+    )
+    if not has_key:
+        raise ValueError(
+            "OPENCODE_API_KEY (or OPENCODE_ZEN_API_KEY) not set. "
+            "Add it to backend/.env (get a key at https://opencode.ai/auth). "
+            "GROQ_API_KEY is no longer used."
+        )
 
 _VIRAL_PROMPT = """You are a viral short-form video editor who deeply understands what performs on Instagram Reels, TikTok, and YouTube Shorts in 2025.
 
@@ -122,64 +118,33 @@ def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
 
 HARD_RULES = "CRITICAL: Output MUST be valid JSON array only. No markdown, no code fences, no explanation."
 
-def _call_groq(system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool = True):
-    cfg = AGENTS[agent_key]
+def _call_ai(system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool = True):
+    """
+    Call OpenCode Zen with model rotation + automatic fallback.
 
-    num_keys = len(_api_keys) if _api_keys else 1
-    last_error = None
-    for attempt in range(num_keys):
-        client, key_idx = _get_next_client()
-        try:
-            response = client.chat.completions.create(
-                model=cfg["model"],
-                messages=[
-                    {"role": "system", "content": system_prompt + "\n\n" + HARD_RULES},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=cfg["temperature"],
-                max_tokens=cfg["max_tokens"]
-            )
-        except Exception as e:
-            err_str = str(e)
-            last_error = err_str
-            if "429" in err_str or "413" in err_str:
-                continue
-            raise
+    Tries models in the agent's tier list (best reasoning first, free models last).
+    On rate-limit, timeout, or 5xx, rotates to next model.
+    On invalid JSON, retries the same model with stricter prompt; if that fails, rotates.
 
-        content = response.choices[0].message.content.strip()
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-
-        return _parse_groq_response(content, system_prompt, user_message, agent_key, retry_on_fail)
-
-    raise RuntimeError(f"All Groq API keys exhausted. Last error: {last_error[:200]}")
-
-def _parse_groq_response(content: str, system_prompt: str, user_message: str, agent_key: str, retry_on_fail: bool):
-    content = content.strip()
-
-    if not content:
-        raise ValueError("AI returned empty response")
+    Returns the parsed JSON dict (with extra '_model' key indicating which model answered).
+    Raises ZenAllModelsExhausted if every tier fails.
+    """
+    if agent_key not in AGENTS:
+        raise ValueError(f"Unknown agent_key: {agent_key}")
 
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as e:
-        if not retry_on_fail:
-            raise ValueError(f"AI returned invalid JSON: {str(e)[:200]}")
-        cfg = AGENTS[agent_key]
-        client, _ = _get_next_client()
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[
-                {"role": "system", "content": system_prompt + "\n\nCRITICAL: You MUST return ONLY valid JSON. No explanation, no markdown, no code fences."},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1,
-            max_tokens=cfg["max_tokens"]
+        return call_with_rotation(
+            agent_key=agent_key,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            parse_json=True,
         )
-        content = response.choices[0].message.content.strip()
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-        return json.loads(content)
+    except ZenAllModelsExhausted as e:
+        log.error(f"[ai] {e}")
+        raise
+    except ZenError as e:
+        log.error(f"[ai] zen error: {e}")
+        raise
 
 def _chunk_transcript(transcript: list, chunk_chars: int = 12000) -> list:
     if not transcript:
@@ -269,7 +234,7 @@ def analyze_transcript_agent1(
             f"\n\nTRANSCRIPT:\n{chunk_text}"
         )
         try:
-            data = _call_groq(_VIRAL_PROMPT, user_message, "clip_finder")
+            data = _call_ai(_VIRAL_PROMPT, user_message, "clip_finder")
         except Exception:
             any_failed = True
             continue
@@ -278,6 +243,9 @@ def analyze_transcript_agent1(
             all_raw_clips.extend(data)
         elif isinstance(data, dict) and "clips" in data:
             all_raw_clips.extend(data["clips"])
+        elif isinstance(data, dict) and "_raw_list" in data:
+            all_raw_clips.extend(data["_raw_list"])
+            log.info(f"[ai] clip_finder used model: {data.get('_model', '?')}")
 
     if not all_raw_clips:
         all_raw_clips = [
@@ -603,7 +571,7 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
         f"CLIPS: {json.dumps(clips)}{market_block}\n\nTRANSCRIPT:\n{transcript_text}"
     )
 
-    data = _call_groq(_AGENT2_PROMPT, user_message, "metadata_generator")
+    data = _call_ai(_AGENT2_PROMPT, user_message, "metadata_generator")
 
     if not isinstance(data, dict):
         data = {"clips": []}

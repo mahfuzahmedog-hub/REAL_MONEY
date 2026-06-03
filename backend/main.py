@@ -40,7 +40,7 @@ class ProcessRequest(BaseModel):
 async def health():
     return {
         "status": "ok",
-        "groq_configured": os.getenv("GROQ_API_KEY") not in (None, "", "your_new_groq_api_key_here"),
+        "zen_configured": bool(os.getenv("OPENCODE_API_KEY", "").strip() or os.getenv("OPENCODE_ZEN_API_KEY", "").strip()),
         "music_tracks": get_track_counts()
     }
 

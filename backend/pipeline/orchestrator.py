@@ -270,7 +270,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 if s.cancelled:
                     return
 
-                _log("Stage 5/8: Analyzing with Agent 1 (Groq)...")
+                _log("Stage 5/8: Analyzing with Agent 1 (Zen)...")
                 s.stage = "analyzing"
                 s.progress = 52
                 agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
@@ -321,7 +321,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             except Exception as e:
                 _log(f"Video analyzer skipped: {e}")
 
-            _log(f"Stage 6/8: Generating metadata with Agent 2 (Groq)...")
+            _log(f"Stage 6/8: Generating metadata with Agent 2 (Zen)...")
             s.stage = "generating metadata"
             s.progress = 57
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
