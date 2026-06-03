@@ -35,6 +35,40 @@ def check_duration(url: str) -> float:
         )
     return duration
 
+
+def get_video_info(url: str) -> dict:
+    """Get YouTube video metadata: title, uploader/channel, duration.
+
+    Returns dict with keys: title, uploader, channel, duration (any may be empty).
+    Uses yt-dlp --print to fetch metadata quickly (no download).
+    """
+    try:
+        result = subprocess.run([
+            YT_DLP,
+            "--print", "%(title)s|||%(uploader)s|||%(channel)s|||%(duration)s",
+            "--no-playlist",
+            "--no-warnings",
+            "--js-runtimes", f"deno:{DENO}",
+            url
+        ], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0 or not result.stdout.strip():
+            return {"title": "", "uploader": "", "channel": "", "duration": 0.0}
+        parts = result.stdout.strip().split("|||")
+        if len(parts) < 4:
+            parts = parts + [""] * (4 - len(parts))
+        try:
+            dur = float(parts[3]) if parts[3] else 0.0
+        except ValueError:
+            dur = 0.0
+        return {
+            "title": parts[0].strip(),
+            "uploader": parts[1].strip(),
+            "channel": parts[2].strip() or parts[1].strip(),
+            "duration": dur,
+        }
+    except Exception:
+        return {"title": "", "uploader": "", "channel": "", "duration": 0.0}
+
 def download_audio_only(url: str, out_path: str) -> str:
     result = subprocess.run([
         YT_DLP, "-x", "--audio-format", "wav",

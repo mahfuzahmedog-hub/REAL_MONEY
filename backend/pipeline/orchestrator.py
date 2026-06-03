@@ -54,6 +54,7 @@ class PipelineStatus:
         self.error = None
         self.download_path = None
         self.video_title = None
+        self.video_channel = None
         self.metadata_path = None
         self.cancelled = False
         self.created_at = time.time()
@@ -67,6 +68,7 @@ class PipelineStatus:
             "error": self.error,
             "download_path": self.download_path,
             "video_title": self.video_title,
+            "video_channel": getattr(self, "video_channel", None),
             "metadata_path": self.metadata_path,
             "done": self.progress == 100
         }
@@ -107,6 +109,7 @@ def _load_status(job_id: str) -> "PipelineStatus | None":
         s.error = d.get("error")
         s.download_path = d.get("download_path")
         s.video_title = d.get("video_title")
+        s.video_channel = d.get("video_channel")
         s.metadata_path = d.get("metadata_path")
         s.cancelled = False
         s.created_at = path.stat().st_mtime
@@ -190,6 +193,16 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
             _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min), quick_mode={quick_mode}")
             if duration < 30:
                 raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
+
+            _log("Stage 2.5/8: Fetching source metadata (channel/uploader)...")
+            try:
+                info = downloader.get_video_info(url)
+                if info and (info.get("title") or info.get("uploader")):
+                    s.video_title = info.get("title") or s.video_title
+                    s.video_channel = info.get("channel") or info.get("uploader") or ""
+                    _log(f"  Source: {s.video_title} | Channel: {s.video_channel}")
+            except Exception as e:
+                _log(f"  get_video_info failed: {e}")
             _save_status(s)
 
             if quick_mode and duration > 1200:
@@ -333,9 +346,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
             s.stage = "generating metadata"
             s.progress = 57
             transcript_text = " ".join(seg.get("text", "") for seg in transcript) if transcript else ""
-            detected_scholar = ai_analyzer.detect_scholar_name(transcript_text)
+            source_meta = f"{s.video_title or ''} {s.video_channel or ''}"
+            detect_text = f"{transcript_text} {source_meta}"
+            detected_scholar = ai_analyzer.detect_scholar_name(detect_text)
             if detected_scholar:
                 _log(f"  Detected scholar: {detected_scholar}")
+            elif s.video_channel:
+                _log(f"  No scholar in transcript; channel: {s.video_channel}")
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
                              "duration": c["duration"], "mood": c.get("mood", "scholarly"),
                              "pillar": c.get("pillar", "REMINDER"),
