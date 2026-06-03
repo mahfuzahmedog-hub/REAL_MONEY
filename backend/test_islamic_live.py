@@ -13,7 +13,7 @@ load_dotenv("C:/Users/User/Desktop/Ridoy/vs code/REAL_MONEY/backend/.env")
 
 from backend.pipeline.orchestrator import run_pipeline, get_status
 
-URL = "https://www.youtube.com/watch?v=uDb3fpJyWXE"
+URL = "https://www.youtube.com/watch?v=uII03mQC4uU"
 JOB_ID = f"islamic_live_{int(time.time())}"
 NICHE = "islamic"
 QUICK_MODE = True

@@ -68,6 +68,101 @@ ISLAMIC_BANNED_HOOK_PATTERNS = [
 ]
 
 
+SCHOLAR_ALLOWLIST = {
+    "muftimenk": "Mufti Menk",
+    "mufti_menk": "Mufti Menk",
+    "omarsuleiman": "Omar Suleiman",
+    "omar_suleiman": "Omar Suleiman",
+    "noumanalikhan": "Nouman Ali Khan",
+    "nouman_ali_khan": "Nouman Ali Khan",
+    "yasirqadhi": "Yasir Qadhi",
+    "yasir_qadhi": "Yasir Qadhi",
+    "mohamedhoblos": "Mohamed Hoblos",
+    "alimhammuda": "Ali Hammuda",
+    "muhammadsalah": "Muhammad Salah",
+    "mishary": "Mishary Rashid Alafasy",
+    "maher": "Maher Al Muaiqly",
+    "husary": "Al-Husary",
+    "sudais": "Sudais",
+    "tariqjameel": "Tariq Jameel",
+    "javedghamidi": "Javed Ahmed Ghamidi",
+    "israrahmed": "Dr. Israr Ahmed",
+    "akhtaruzzaman": "Dr. Akhtaruzzaman",
+}
+
+
+def detect_scholar_name(text: str) -> str:
+    """Detect scholar name from transcript or source metadata.
+
+    Returns the display name (e.g., "Mufti Menk") or empty string.
+    """
+    if not text:
+        return ""
+    text_lower = text.lower()
+    for handle, display in SCHOLAR_ALLOWLIST.items():
+        if handle in text_lower.replace(" ", "_") or handle in text_lower.replace("_", " "):
+            return display
+    name_keys = ["mufti menk", "omar suleiman", "nouman ali khan", "yasir qadhi",
+                 "mohamed hoblos", "ali hammuda", "muhammad salah",
+                 "mishary rashid", "maher al muaiqly", "tariq jameel",
+                 "javed ghamidi", "dr. israr", "akhtaruzzaman"]
+    for n in name_keys:
+        if n in text_lower:
+            return n.title() if not n.startswith("dr") else "Dr. " + n.split(" ", 1)[1].title()
+    return ""
+
+
+TRENDING_ISLAMIC_TAGS = [
+    "islamicstatus", "islamicreminder", "islamiclifestyle",
+    "islamiclectures", "islamicvideo", "islamicshorts",
+    "allah", "allahuakbar", "subhanallah", "mashallah",
+    "quran", "hadith", "dua", "deen", "iman", "taqwa",
+    "muslim", "muslimtiktok", "muslimreminder",
+    "palestine", "freepalestine",
+    "scholar", "lecture", "reminder", "motivation",
+    "patience", "sabr", "tawakkul", "shukr",
+]
+
+
+def generate_trending_tags(pillar: str, scholar_name: str = "", count: int = 3) -> list:
+    """Generate trending tag list based on pillar + scholar.
+
+    Returns 2-3 trending tags that boost discoverability.
+    """
+    tags = []
+    pillar_tag_map = {
+        "QURAN_VERSE": ["quran", "allah", "islamicreminder"],
+        "HADITH": ["hadith", "deen", "iman"],
+        "DUA": ["dua", "islamiclifestyle", "allah"],
+        "REMINDER": ["reminder", "islamicstatus", "muslimreminder"],
+        "STORY_OF_PROPHET": ["quran", "scholar", "islamiclectures"],
+        "STORY_OF_COMPANION": ["islamicstatus", "scholar", "deen"],
+        "SCHOLAR_QUOTE": ["scholar", "lecture", "islamiclectures"],
+        "ISLAMIC_LIFESTYLE": ["islamiclifestyle", "deen", "muslim"],
+    }
+    tags.extend(pillar_tag_map.get(pillar, ["reminder", "islamicstatus"]))
+    if scholar_name:
+        handle = scholar_name.lower().replace(" ", "").replace(".", "")
+        tags.append(handle[:14])
+    return tags[:count]
+
+
+def cross_promotion_tag(current_scholar: str) -> str:
+    """Pick 1 cross-promotion scholar name for reach (different from current)."""
+    if not current_scholar:
+        return ""
+    others = [
+        ("Mufti Menk", "muftimenk"),
+        ("Omar Suleiman", "omarsuleiman"),
+        ("Nouman Ali Khan", "noumanalikhan"),
+        ("Yasir Qadhi", "yasirqadhi"),
+    ]
+    for display, handle in others:
+        if display.lower() != current_scholar.lower():
+            return handle
+    return ""
+
+
 def _normalize_mood(mood: str, niche: str = "") -> str:
     if not mood:
         return "scholarly"
@@ -497,9 +592,27 @@ HARD RULES:
   "hey guys", "so today", "in this video", "going viral", "you won't believe",
   "funny", "comedy", "lol", "lmao", "hilarious"
 
+HIGH-PERFORMING HOOK PATTERNS (learned from 7 reference Shorts with 200K-2.4M views):
+
+Pattern A — IMPERATIVE + EMOTION + CONSEQUENCE:
+  "Beg Allah till he gives you what your heart wants"
+  "Trust Allah for everything - No matter what"
+
+Pattern B — TIME MARKER + ACTION + RESULT:
+  "The moment you give up, that's when the door closes"
+  "The day you stop worrying, that's the day peace arrives"
+
+Pattern C — STATEMENT + DIVINE PROMISE:
+  "Nothing is impossible for Allah"
+  "Allah is the planner, not you"
+
+Pattern D — DIRECT ADDRESS + REASSURANCE:
+  "Don't stress, Allah is the planner"
+  "You are not alone, Allah is with you"
+
 IF FALLBACK MODE (no transcript):
 Hook must be mood + pillar-based only.
-Format: [emotion word] + [spiritual action] + [open reflection]
+Format: [imperative/emotion word] + [spiritual action] + [open reflection]
 
 Examples by mood/pillar (Islamic only):
 - reflective + QURAN_VERSE -> "Reflect on this verse daily"
@@ -517,71 +630,106 @@ IF REAL TRANSCRIPT:
 Hook must reference an actual moment from the transcript.
 Quote or paraphrase real content - never invent.
 NEVER translate or paraphrase Arabic verses — Arabic verses are rendered separately.
+Prefer Pattern A, B, C, or D from the high-performer list above.
 
 ==================================================
 TITLE RULES
 ==================================================
 
-- Maximum 60 characters
-- Outcome-first or reflection-first structure
-- Must make sense without watching the video
-- SEO-friendly: include a searchable Islamic keyword (e.g., "Quran", "Hadith", "Dua", "Reminder")
-- Never generic: "The Powerful Reminder" is REJECTED
-- Include the pillar or scholar name when relevant
+CRITICAL FORMAT (learned from 7 reference Shorts with 200K-2.4M views):
 
-Examples of good titles:
-- "The Hadith on Intentions - Sahih Bukhari 1"
-- "Ayat al-Kursi: The Throne Verse Explained"
-- "A Reminder on Patience from Surah Al-Baqarah"
-- "The Dua Before Sleeping - Prophet's Teaching"
+Format:  [Hook] - [Scholar Name]
+Example: "Trust Allah for everything - No matter what - Mufti Menk"
+Example: "Beg Allah till he gives you what your heart wants - Mufti Menk"
+Example: "The moment you give up, that's when the door closes - Mufti Menk"
+
+ALTERNATIVE FORMATS (use only if scholar not detected):
+  [Hook] - [Islamic keyword]   e.g. "Trust Allah for everything - Quran Reflection"
+  [Hook] | [Pillar]            e.g. "Don't stress, Allah is the planner | Hadith"
+
+TITLE HARD RULES:
+- 30-65 characters (sweet spot 40-55)
+- Hook phrase IS the title (not "Reminder:" or "Quran Verse:" prefix)
+- Scholar name ALWAYS at the end after a dash (trust signal + searchability)
+- NEVER use these prefixes: "Reminder:", "Quran Verse:", "Scholar Quote:", "Islamic:", "Daily:"
+- NEVER use these patterns: "This will change you", "You need to hear this", "Powerful reminder"
+- The title should be a scroll-stopper AND a searchable keyword
+
+SCHOLAR NAME DETECTION:
+- If transcript mentions "Mufti Menk", "Omar Suleiman", "Nouman Ali Khan",
+  "Yasir Qadhi", "Mishary", "Maher", "Husary", "Sudais", "Tariq Jameel",
+  "Javed Ghamidi", "Dr. Israr", "Akhtaruzzaman" — use that name
+- If no scholar detected, use the pillar name as suffix:
+  "Quran Reflection" / "Hadith Reminder" / "Dua Reminder"
 
 IF FALLBACK MODE:
-Title format: [Islamic keyword] + [Mood/reflection descriptor]
-Example: "Daily Quran Reminder: Reflect on Allah's Mercy"
+Title = [Hook] - Islamic Reminder
+Example: "Your heart needs this reminder - Islamic Reminder"
 Not: "The Powerful Reminder" or "This Will Change You"
 
 ==================================================
 TAG RULES
 ==================================================
 
-Return exactly 5-8 tags per clip.
-Never use "general" as a tag. Ever.
-Never repeat the same tag across all clips.
+Return exactly 6-10 tags per clip. More than 5 is now expected.
 
-Tag structure - include ALL THREE types:
-1. Niche tag (Islamic content type): "quran", "hadith", "dua", "reminder", "islamiclifestyle"
-2. Emotion tag (how it feels): "reflective", "peaceful", "motivational", "devotional", "scholarly"
-3. Format tag (what kind of clip): "lecture", "recitation", "reflection", "qa", "story"
+TAG STRATEGY (learned from 7 reference Shorts):
+Tags must include ALL FOUR types:
 
-Example good tags: ["quran", "reminder", "scholarly", "lecture", "islam", "tafsir", "verseoftheday"]
-Example bad tags: ["general", "powerful", "viral"] -- REJECTED
+1. SCHOLAR TAG (if detected): "muftimenk", "omarsuleiman", "noumanalikhan"
+   — Critical for reach within scholar fanbase
+2. NICHE TAG (content type): "quran", "hadith", "dua", "reminder", "islamiclifestyle"
+3. TRENDING TAG (discoverability): "islamicstatus", "islamicreminder",
+   "islamiclifestyle", "islamiclectures", "islamicvideo", "allah", "muslimreminder"
+4. CROSS-PROMO TAG (one other scholar): "omarsuleiman" (when clip is mufti menk)
+   — Algorithm surfaces your video in other scholar communities
+
+TRENDING TAG POOL (pick 2-3 from this list per clip):
+islamicstatus, islamicreminder, islamiclifestyle, islamiclectures,
+islamicvideo, allah, allahuakbar, subhanallah, quran, hadith, dua,
+deen, iman, taqwa, muslim, muslimtiktok, muslimreminder, palestine,
+scholar, lecture, reminder, motivation, patience, sabr, tawakkul, shukr
+
+GOOD TAG EXAMPLES:
+["muftimenk", "quran", "reminder", "islamicstatus", "islamiclifestyle",
+ "allah", "omarsuleiman", "muslimreminder"]
+["muftimenk", "hadith", "scholar", "islamiclectures", "deen",
+ "islamicreminder", "subhanallah", "noumanalikhan"]
+["muftimenk", "dua", "peaceful", "islamiclifestyle", "allah",
+ "islamicstatus", "muslim", "mashallah"]
+
+BAD TAGS (REJECTED):
+["general", "powerful", "viral", "fyp", "trending", "motivation" alone]
+
+NEVER repeat the same tag across all clips — each clip needs unique trending tag.
 
 ==================================================
 CAPTION RULES
 ==================================================
 
 Generate 3 captions per clip. Each must be platform-native AND Islamic.
+Reference Shorts use EMPTY descriptions on YouTube — keep captions PUNCHY.
 
-INSTAGRAM:
-- 1-3 sentences, sincere tone
-- End with a reflection prompt OR "Send this to [family member]" 
-- 3-5 Islamic-specific hashtags (NOT #general, NOT #viral, NOT #fyp)
-- Acceptable: "SubhanAllah. The verse that reminds us of His mercy. Send this to someone who needs it today. #quran #islam #reminder #islamicreminder #deen"
+INSTAGRAM (1-2 sentences + 5-7 hashtags):
+- 1-2 sentences max, sincere tone
+- End with reflection prompt OR "Send this to [family member]"
+- 5-7 Islamic-specific hashtags (NOT #general, NOT #viral, NOT #fyp)
+- Acceptable: "SubhanAllah. The verse that reminds us of His mercy. Send this to someone who needs it today. #quran #islam #reminder #islamicreminder #islamicstatus #deen #allah"
 - Rejected: "Share this with friends! #general #viral"
 
-TIKTOK:
+TIKTOK (1 sentence + 2-3 hashtags):
 - 1 sentence max, sincere but conversational
-- 1-2 Islamic-specific hashtags only
+- 2-3 Islamic-specific hashtags only
 - No emojis overload, no clickbait
-- Acceptable: "The verse that calms every anxious heart #quran #islam"
+- Acceptable: "The verse that calms every anxious heart #quran #islam #islamicreminder"
 - Rejected: "wait for it #fyp #viral"
 
-YOUTUBE:
-- First line must contain a searchable Islamic keyword
-- 2-3 sentences
+YOUTUBE (1 sentence + 3-5 hashtags):
+- 1-2 sentences MAX (reference uses empty descriptions)
+- First line contains searchable Islamic keyword
 - Soft engagement prompt (NOT "like and subscribe")
 - 3-5 Islamic hashtags
-- Acceptable: "Quran reflection on the verse of the throne. A reminder for every believer. Drop a SubhanAllah in the comments. #quran #islam #shorts #islamicreminder #deen"
+- Acceptable: "Quran reflection on the verse of the throne. Drop a SubhanAllah in the comments. #quran #islam #shorts #islamicreminder"
 - Rejected: "Like if you agree! #general"
 
 ==================================================
@@ -592,7 +740,8 @@ You will receive:
 
 NICHE: islamic
 FALLBACK_MODE: [true / false]
-CLIPS: [array of {id, start, end, duration, mood, pillar}]
+SCHOLAR_NAME: [e.g. "Mufti Menk" — use this in EVERY title with format " - [Scholar Name]"]
+CLIPS: [array of {id, start, end, duration, mood, pillar, scholar_name}]
 
 TRANSCRIPT: (if available)
 [timestamped transcript]
@@ -655,7 +804,143 @@ Before returning output verify every clip passes ALL of these:
 - pillar is one of: QURAN_VERSE, HADITH, DUA, REMINDER, STORY_OF_PROPHET, STORY_OF_COMPANION, SCHOLAR_QUOTE, ISLAMIC_LIFESTYLE
 """
 
-def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False) -> dict:
+
+BANNED_TITLE_PREFIXES = (
+    "Reminder:", "Quran Verse:", "Scholar Quote:", "Islamic:",
+    "Daily:", "Powerful:", "Islamic Reminder:", "Today:", "Watch:",
+    "This Will", "You Need To", "Listen:", "Important:", "Lesson:",
+    "Beautiful:", "Amazing:", "Incredible:", "Must Watch:",
+)
+
+SCHOLAR_TAG_MAP = {
+    "Mufti Menk": "muftimenk",
+    "Omar Suleiman": "omarsuleiman",
+    "Nouman Ali Khan": "noumanalikhan",
+    "Yasir Qadhi": "yasirqadhi",
+    "Mohamed Hoblos": "mohamedhoblos",
+    "Ali Hammuda": "alimhammuda",
+    "Muhammad Salah": "muhammadsalah",
+    "Mishary Rashid Alafasy": "misharyrashid",
+    "Maher Al Muaiqly": "maheralmuaiqly",
+}
+
+
+def _enforce_title_pattern(title: str, scholar_name: str = "", pillar: str = "") -> str:
+    """Force title to [Hook] - [Scholar Name] or [Hook] - [Pillar] pattern.
+
+    Strips banned prefixes (Reminder:, Quran Verse:, etc.), truncates if too long,
+    and appends scholar name if not already present.
+    """
+    if not title:
+        title = "Islamic Reminder"
+    title = title.strip().strip('"').strip("'")
+    title_lower = title.lower()
+    for prefix in BANNED_TITLE_PREFIXES:
+        if title.startswith(prefix):
+            title = title[len(prefix):].lstrip(" :|-")
+            break
+    for prefix_lower in [p.lower() for p in BANNED_TITLE_PREFIXES]:
+        if title_lower.startswith(prefix_lower):
+            title = title[len(prefix_lower):].lstrip(" :|-")
+            break
+    if scholar_name and scholar_name.lower() not in title.lower():
+        suffix = f" - {scholar_name}"
+        if len(title) + len(suffix) <= 70:
+            title = title.rstrip(" -|") + suffix
+        else:
+            max_hook = 70 - len(suffix) - 1
+            if len(title) > max_hook:
+                title = title[:max_hook].rstrip(" ,;:-")
+            title = title + suffix
+    elif pillar and not scholar_name:
+        pillar_suffix = {
+            "QURAN_VERSE": "Quran Reflection",
+            "HADITH": "Hadith Reminder",
+            "DUA": "Dua Reminder",
+            "REMINDER": "Islamic Reminder",
+            "STORY_OF_PROPHET": "Prophetic Story",
+            "STORY_OF_COMPANION": "Companion Story",
+            "SCHOLAR_QUOTE": "Scholar Reminder",
+            "ISLAMIC_LIFESTYLE": "Islamic Lifestyle",
+        }.get(pillar, "Islamic Reminder")
+        if pillar_suffix.lower() not in title.lower():
+            suffix = f" - {pillar_suffix}"
+            if len(title) + len(suffix) <= 70:
+                title = title.rstrip(" -|") + suffix
+    if len(title) > 80:
+        title = title[:80].rstrip(" ,;:-")
+    return title
+
+
+def _enforce_hook(hook: str) -> str:
+    """Enforce hook rules: max 8 words, no banned phrases, strip quotes."""
+    if not hook:
+        return ""
+    hook = hook.strip().strip('"').strip("'")
+    banned_hooks = [
+        "wait for it", "watch till the end", "this is crazy", "mind blown",
+        "subscribe", "like and subscribe", "like if you agree", "follow for more",
+        "hey guys", "so today", "in this video", "going viral", "you won't believe",
+        "funny", "comedy", "lol", "lmao", "hilarious",
+    ]
+    hook_lower = hook.lower()
+    for b in banned_hooks:
+        if b in hook_lower:
+            return ""
+    words = hook.split()
+    if len(words) > 8:
+        hook = " ".join(words[:8])
+    return hook
+
+
+def _enforce_tags(tags: list, pillar: str = "", scholar_name: str = "", all_clips: list = None) -> list:
+    """Enforce tag rules: 6-10 tags, no generic, include scholar + pillar + trending.
+
+    all_clips is used to avoid duplicating trending tags across clips.
+    """
+    if not isinstance(tags, list):
+        tags = []
+    out = []
+    seen = set()
+    for t in tags:
+        if not isinstance(t, str):
+            continue
+        t_clean = t.lower().strip().lstrip("#").replace(" ", "")
+        if not t_clean or t_clean in seen:
+            continue
+        if t_clean in {"general", "viral", "fyp", "foryou", "trending", "powerful", "motivation"}:
+            continue
+        seen.add(t_clean)
+        out.append(t_clean)
+    if scholar_name:
+        handle = SCHOLAR_TAG_MAP.get(scholar_name, scholar_name.lower().replace(" ", "").replace(".", ""))[:14]
+        if handle and handle not in seen:
+            out.insert(0, handle)
+            seen.add(handle)
+    if pillar and pillar not in seen:
+        out.append(pillar.lower().replace("_", ""))
+        seen.add(pillar.lower().replace("_", ""))
+    used_trending = set()
+    if all_clips:
+        for prev in all_clips:
+            for pt in prev.get("tags", []):
+                if pt in TRENDING_ISLAMIC_TAGS:
+                    used_trending.add(pt)
+    pillar_pool = generate_trending_tags(pillar, scholar_name, count=4)
+    for pt in pillar_pool:
+        if pt not in used_trending and pt not in seen and len(out) < 10:
+            out.append(pt)
+            seen.add(pt)
+            used_trending.add(pt)
+    if scholar_name and len(out) < 10:
+        cross = cross_promotion_tag(scholar_name)
+        if cross and cross not in seen:
+            out.append(cross)
+            seen.add(cross)
+    return out[:10]
+
+
+def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False, scholar_name: str = "") -> dict:
     from ..download.transcriber import filter_segments
     from ..download import market
     transcript_text = filter_segments(transcript, max_chars=6000)
@@ -667,8 +952,12 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
     except Exception as e:
         print(f"[ai] market context fetch failed (agent2): {e}", flush=True)
 
+    if not scholar_name and clips and isinstance(clips[0], dict):
+        scholar_name = clips[0].get("scholar_name", "") or ""
+
     user_message = (
         f"NICHE: {niche}\nFALLBACK_MODE: {str(fallback_mode).lower()}\n"
+        f"SCHOLAR_NAME: {scholar_name or '(none detected — use pillar as suffix)'}\n"
         f"CLIPS: {json.dumps(clips)}{market_block}\n\nTRANSCRIPT:\n{transcript_text}"
     )
 
@@ -703,6 +992,12 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
         if pillar not in ISLAMIC_PILLARS:
             pillar = "REMINDER"
 
+        clip_scholar = c.get("scholar_name", "") or scholar_name
+
+        title = _enforce_title_pattern(title, clip_scholar, pillar)
+        hook_text = _enforce_hook(hook_text)
+        tags = _enforce_tags(tags, pillar, clip_scholar, all_clips=normalized)
+
         normalized.append({
             "id": c.get("id", ""),
             "start": max(0.0, float(c.get("start", 0))),
@@ -716,6 +1011,7 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
             "primary_signal": c.get("primary_signal", ""),
             "mood": _normalize_mood(c.get("mood", ""), niche),
             "pillar": pillar,
+            "scholar_name": clip_scholar,
             "reason": c.get("reason", ""),
             "hook_text": hook_text,
             "title": title,

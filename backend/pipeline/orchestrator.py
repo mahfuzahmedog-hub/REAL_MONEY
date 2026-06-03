@@ -332,12 +332,20 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
             _log(f"Stage 6/8: Generating metadata with Agent 2 (Zen)...")
             s.stage = "generating metadata"
             s.progress = 57
+            transcript_text = " ".join(seg.get("text", "") for seg in transcript) if transcript else ""
+            detected_scholar = ai_analyzer.detect_scholar_name(transcript_text)
+            if detected_scholar:
+                _log(f"  Detected scholar: {detected_scholar}")
             simple_clips = [{"id": c["id"], "start": c["start"], "end": c["end"],
                              "duration": c["duration"], "mood": c.get("mood", "scholarly"),
-                             "pillar": c.get("pillar", "REMINDER")}
+                             "pillar": c.get("pillar", "REMINDER"),
+                             "scholar_name": detected_scholar}
                             for c in agent1_clips]
             fallback_mode = used_energy_fallback or (not transcript)
-            agent2_result = ai_analyzer.generate_metadata_agent2(transcript, simple_clips, duration, niche, fallback_mode)
+            agent2_result = ai_analyzer.generate_metadata_agent2(
+                transcript, simple_clips, duration, niche, fallback_mode,
+                scholar_name=detected_scholar,
+            )
             clips_meta = agent2_result.get("clips", [])
             _log(f"Agent 2 generated metadata for {len(clips_meta)} clips (fallback_mode={fallback_mode})")
             _save_status(s)
