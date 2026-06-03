@@ -112,6 +112,21 @@ def _build_watermark_events(brand_text: str, duration: float) -> list:
         f"Dialogue: 0,0:00:00.00,{format_ts_ass(duration)},Watermark,,0,0,0,,{brand_text}"
     ]
 
+
+def _build_cta_events(duration: float, cta_text: str = "Follow for more") -> list:
+    """End-of-clip CTA card. Shows for the last 1.5 seconds of the clip.
+
+    Drives follows/shares by giving viewers a clear next action.
+    """
+    if duration < 5:
+        return []
+    cta_start = max(0.0, duration - 1.5)
+    cta_start_str = format_ts_ass(cta_start)
+    end_str = format_ts_ass(duration)
+    return [
+        f"Dialogue: 0,{cta_start_str},{end_str},CTACard,,0,0,0,,{cta_text.upper()}"
+    ]
+
 def _accent_for(mood: str) -> str:
     return ACCENT_COLORS.get((mood or "").lower(), HIGHLIGHT_COLOR)
 
@@ -217,6 +232,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Default,Arial Black,130,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,2,40,40,180,1
 Style: HookCard,Arial Black,180,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,780,1
 Style: Watermark,Arial,55,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,0,0,3,0,0,3,40,80,90,1
+Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -231,6 +247,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     # 2) Watermark throughout (small brand text, bottom-right)
     wm_events = _build_watermark_events(brand_text, duration)
     events.extend(wm_events)
+
+    # 3) CTA card at end (last 1.5s, drives follow/share action)
+    cta_events = _build_cta_events(duration, "Follow for more")
+    events.extend(cta_events)
 
     # 3) Main subtitles
     for seg in transcript:
