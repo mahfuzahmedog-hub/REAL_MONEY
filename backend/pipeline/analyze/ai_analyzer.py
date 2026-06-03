@@ -824,6 +824,17 @@ SCHOLAR_TAG_MAP = {
     "Maher Al Muaiqly": "maheralmuaiqly",
 }
 
+# Arabic tag equivalents (from reference Shorts like 2.4M-view "Trust Allah...")
+SCHOLAR_ARABIC_TAGS = {
+    "Mufti Menk": ["مفتي منك", "اسماعيل منك", "اسماعيل بن موسى منك"],
+    "Omar Suleiman": ["عمر سليمان", "الدكتور عمر"],
+    "Nouman Ali Khan": ["نعمان علي خان"],
+    "Yasir Qadhi": ["ياسر قادري"],
+    "Mishary Rashid Alafasy": ["مشاري العفاسي", "مشاري راشد"],
+    "Maher Al Muaiqly": ["ماهر المعيقلي"],
+    "Muhammad Salah": ["محمد صلاح"],
+}
+
 
 def _enforce_title_pattern(title: str, scholar_name: str = "", pillar: str = "") -> str:
     """Force title to [Hook] - [Scholar Name] or [Hook] - [Pillar] pattern.
@@ -937,7 +948,15 @@ def _enforce_tags(tags: list, pillar: str = "", scholar_name: str = "", all_clip
         if cross and cross not in seen:
             out.append(cross)
             seen.add(cross)
-    return out[:10]
+    # Add Arabic scholar tag (matches reference Shorts like 2.4M-view "Trust Allah...")
+    if scholar_name and len(out) < 11:
+        arabic_tags = SCHOLAR_ARABIC_TAGS.get(scholar_name, [])
+        if arabic_tags:
+            arb = arabic_tags[0]
+            if arb not in seen:
+                out.append(arb)
+                seen.add(arb)
+    return out[:11]
 
 
 def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False, scholar_name: str = "") -> dict:
