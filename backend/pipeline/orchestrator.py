@@ -488,9 +488,13 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                     clip_start = max(0, clip_start - pad)
                     clip_end = min(duration, clip_end + pad)
                     clip_duration = clip_end - clip_start
-                if clip_duration > 90:
-                    clip_end = clip_start + 90
-                    clip_duration = clip_end - clip_start
+                if clip_duration > 60:
+                    # YouTube Shorts / TikTok / Instagram Reels max is 60s.
+                    # Center-crop to the most engaging middle 60s.
+                    excess = clip_duration - 60
+                    clip_start += excess / 2
+                    clip_end = clip_start + 60
+                    clip_duration = 60
                 if clip_duration < MIN_CLIP_SEC:
                     _log(f"  Skip clip {i+1}: too short ({clip_duration:.0f}s)")
                     return None
