@@ -472,7 +472,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 )
                 if reactions:
                     _log(f"    Punchline reactions: {[(r['emoji'], r['t']) for r in reactions]}")
-                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions)
+                from .render.framing import detect_crop_region
+                action_center = detect_crop_region(section_path, sample_seconds=min(2.0, clip_duration / 2))
+                if action_center:
+                    _log(f"    Action center: w={action_center['w']} h={action_center['h']} x={action_center['x']} y={action_center['y']}")
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center)
 
                 final_size = os.path.getsize(final_path) / (1024 * 1024)
                 _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")

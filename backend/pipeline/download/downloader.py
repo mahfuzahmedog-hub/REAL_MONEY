@@ -50,10 +50,16 @@ def download_audio_only(url: str, out_path: str) -> str:
     return out_path
 
 def download_full_video(url: str, out_path: str) -> str:
-    """Download the full video in a small, fast format. Used as a base for ffmpeg cuts."""
+    """Download the full video at a moderate quality. Used as a base for ffmpeg cuts.
+
+    480p ceiling gives enough pixels for tight 9:16 vertical crops while
+    keeping the temp file under ~500MB for an 80-min video. Going to 720p
+    doubles the size and the per-clip encode time with marginal visual gain
+    because the final encode is 1080x1920 anyway and crf 20 already loses detail.
+    """
     result = subprocess.run([
         YT_DLP,
-        "-f", "worst[ext=mp4]/worst",
+        "-f", "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
         "-o", out_path,
         "--no-playlist",
         "--no-part",

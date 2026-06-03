@@ -3,18 +3,7 @@ import re
 from pathlib import Path
 from ..config import FFMPEG
 from . import look
-
-def get_crop_filter(input_w: int, input_h: int) -> str:
-    target_w = int(input_h * 9 / 16)
-    target_w = min(target_w, input_w)
-    if target_w % 2 != 0:
-        target_w -= 1
-    x_offset = (input_w - target_w) // 2
-    y_offset = int(input_h * 0.02)
-    crop_h = input_h - y_offset
-    if crop_h % 2 != 0:
-        crop_h -= 1
-    return f"crop={target_w}:{crop_h}:{x_offset}:{y_offset},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+from . import framing
 
 def get_probe(video_path: str) -> dict:
     """Use ffprobe for reliable width/height detection."""
@@ -44,9 +33,10 @@ def process_clip(
     caption_hook: str, output_path: str, mood: str = "hype",
     brand_text: str = "",
     punchline_reactions: list | None = None,
+    action_center: dict | None = None,
 ) -> str:
     probe = get_probe(video_path)
-    crop = get_crop_filter(probe["width"], probe["height"])
+    crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
     grade = look.get_grade_filter(mood)
     hook = look.build_hook_filter(caption_hook, mood)
     watermark = look.build_brand_watermark_filter(brand_text, mood) if brand_text else ""

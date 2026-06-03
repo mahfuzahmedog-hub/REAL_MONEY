@@ -23,12 +23,18 @@ MOOD_GRADE = {
 
 PUNCHLINE_EMOJIS = ["\U0001F480", "\U0001F525", "\U0001F4AF", "\U0001F923", "\U0001F62D", "\U0001F44F"]
 PUNCHLINE_KEYWORDS = {
-    "\U0001F480": ["died", "dead", "kill", "killed", "skull", "casket", "coffin", "rip", "💀", "ghost", "crazy", "insane", "wild"],
-    "\U0001F525": ["fire", "lit", "hot", "burn", "flame", "cook", "cooked", "slay", "slayed", "ate", "spicy", "heat"],
-    "\U0001F4AF": ["hundred", "100", "perfect", "flawless", "ace", "bullseye", "nailed"],
-    "\U0001F923": ["lol", "lmao", "haha", "rofl", "😂", "🤣", "hilarious", "joke"],
-    "\U0001F62D": ["crying", "tears", "broke", "broke me", "sob", "😭", "pain"],
-    "\U0001F44F": ["clap", "respect", "salute", "👏", "bravo", "king", "queen", "goat"],
+    "\U0001F480": ["died", "dead", "kill", "killed", "skull", "casket", "coffin", "rip", "💀", "ghost", "crazy", "insane", "wild",
+                   "mara", "mari", "mrityu", "khatam", "gaya", "band", "bando"],
+    "\U0001F525": ["fire", "lit", "hot", "burn", "flame", "cook", "cooked", "slay", "slayed", "ate", "spicy", "heat",
+                   "ag", "jala", "jalaa", "jalwa", "mast", "jhakaas", "dhamaka", "kamaal"],
+    "\U0001F4AF": ["hundred", "100", "perfect", "flawless", "ace", "bullseye", "nailed",
+                   "sau", "pura", "pakka", "perfect"],
+    "\U0001F923": ["lol", "lmao", "haha", "rofl", "😂", "🤣", "hilarious", "joke",
+                   "hassi", "hansi", "hasa", "hasi", "mazaak", "majak", "funn", "pagal", "pagol"],
+    "\U0001F62D": ["crying", "tears", "broke", "broke me", "sob", "😭", "pain",
+                   "ro", "roi", "rona", "aansu", "dard", "dil"],
+    "\U0001F44F": ["clap", "respect", "salute", "👏", "bravo", "king", "queen", "goat",
+                   "wah", "wahh", "wahji", "kya baat", "kya baat hai", "shabaash", "zabardast"],
 }
 
 
