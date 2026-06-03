@@ -4,7 +4,8 @@ Modules:
 - ai_analyzer: Groq Llama 4 Scout agent 1 (clip selection) and agent 2 (metadata)
 - quality: energy-based clip detection, no_speech_prob filtering
 - subtitler: ASS subtitle file generation (burned in by render/clipper)
+- video_analyzer: spectral laugh detection + humor scoring + combined worth metric
 """
-from . import ai_analyzer, quality, subtitler
+from . import ai_analyzer, quality, subtitler, video_analyzer
 
-__all__ = ["ai_analyzer", "quality", "subtitler"]
+__all__ = ["ai_analyzer", "quality", "subtitler", "video_analyzer"]

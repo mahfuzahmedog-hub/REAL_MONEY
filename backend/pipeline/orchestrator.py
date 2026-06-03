@@ -19,7 +19,11 @@ _log_start = time.time()
 
 def _log(msg: str):
     elapsed = time.time() - _log_start
-    print(f'  [{elapsed:6.1f}s] {msg}', flush=True)
+    try:
+        print(f'  [{elapsed:6.1f}s] {msg}', flush=True)
+    except UnicodeEncodeError:
+        safe = msg.encode('ascii', errors='backslashreplace').decode('ascii')
+        print(f'  [{elapsed:6.1f}s] {safe}', flush=True)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 STATUS_TTL_SEC = 1800
@@ -292,6 +296,31 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             if s.cancelled:
                 return
 
+            _log(f"Stage 6/8: Running video analyzer on {len(agent1_clips)} clips...")
+            s.stage = "video analyzer"
+            try:
+                from .analyze.video_analyzer import analyze_segment
+                updated_clips = []
+                for c in agent1_clips:
+                    clip_start = c["start"]
+                    clip_end = c["end"]
+                    seg_text = ""
+                    for st in transcript:
+                        if st["start"] <= clip_end and st["end"] >= clip_start:
+                            seg_text += " " + st.get("text", "")
+                    va = await loop.run_in_executor(None, analyze_segment, audio_path, clip_start, clip_end, seg_text)
+                    c["video_worth"] = va.get("worth_score", 0.5)
+                    c["video_laugh"] = va.get("laugh_score", 0)
+                    c["video_mood"] = va.get("mood", c.get("mood", "hype"))
+                    if va.get("is_worth_clipping"):
+                        score_boost = va["worth_score"] * 0.3
+                        c["viral_score"] = c.get("viral_score", 50) + score_boost * 10
+                    updated_clips.append(c)
+                agent1_clips = sorted(updated_clips, key=lambda x: x.get("viral_score", 0), reverse=True)
+                _log(f"Video analyzer adjusted {len(agent1_clips)} clips")
+            except Exception as e:
+                _log(f"Video analyzer skipped: {e}")
+
             _log(f"Stage 6/8: Generating metadata with Agent 2 (Groq)...")
             s.stage = "generating metadata"
             s.progress = 57
@@ -332,7 +361,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             output_dir_path = Path(OUTPUT_DIR) / job_id
             output_dir_path.mkdir(parents=True, exist_ok=True)
 
-            _log(f"Stage 7/8: Downloading full video (worst quality, fast)...")
+            _log(f"Stage 7/8: Downloading full video (720p DASH merge)...")
             s.stage = "downloading video"
             s.progress = 58
             full_video_path = os.path.join(job_dir, "full.mp4")
@@ -341,12 +370,6 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
             video_size = os.path.getsize(full_video_path) / (1024 * 1024)
             _log(f"Full video downloaded: {video_size:.1f} MB")
             s.progress = 62
-
-            _log(f"Stage 7/8: Processing {len(agent1_clips)} clips...")
-            clip_results = []
-            clip_progress_start = 63
-            clip_progress_range = 30
-            total_clips = len(agent1_clips)
 
             def _find_window_audio(clip_start: float) -> str | None:
                 if not quick_mode:
@@ -364,6 +387,12 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                         return wt.get("segments", [])
                 return []
 
+            _log(f"Stage 7/8: Processing {len(agent1_clips)} clips...")
+            clip_results = []
+            clip_progress_start = 63
+            clip_progress_range = 30
+            total_clips = len(agent1_clips)
+
             def _encode_one(i: int, clip: dict):
                 if s.cancelled:
                     return None
@@ -372,16 +401,20 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 meta = metadata_lookup.get(clip_id, {})
                 caption_hook = caption_hook_lookup.get(clip_id, "")
 
+                MIN_CLIP_SEC = 25
                 clip_start = max(0, clip["start"])
                 clip_end = min(clip["end"], duration)
                 clip_duration = clip_end - clip_start
 
-                if clip_duration < 7:
-                    clip_end = min(clip_start + 7, duration)
+                if clip_duration < MIN_CLIP_SEC:
+                    pad = (MIN_CLIP_SEC - clip_duration) / 2
+                    clip_start = max(0, clip_start - pad)
+                    clip_end = min(duration, clip_end + pad)
                     clip_duration = clip_end - clip_start
                 if clip_duration > 90:
                     clip_end = clip_start + 90
-                if clip_duration < 7:
+                    clip_duration = clip_end - clip_start
+                if clip_duration < MIN_CLIP_SEC:
                     _log(f"  Skip clip {i+1}: too short ({clip_duration:.0f}s)")
                     return None
 
@@ -472,8 +505,8 @@ async def run_pipeline(url: str, job_id: str, niche: str = "general", quick_mode
                 )
                 if reactions:
                     _log(f"    Punchline reactions: {[(r['emoji'], r['t']) for r in reactions]}")
-                from .render.framing import detect_crop_region
-                action_center = detect_crop_region(section_path, sample_seconds=min(2.0, clip_duration / 2))
+                from .render.framing import detect_action_center
+                action_center = detect_action_center(section_path, sample_seconds=min(2.0, clip_duration / 2))
                 if action_center:
                     _log(f"    Action center: w={action_center['w']} h={action_center['h']} x={action_center['x']} y={action_center['y']}")
                 clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center)

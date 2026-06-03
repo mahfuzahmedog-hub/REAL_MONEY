@@ -50,19 +50,22 @@ def download_audio_only(url: str, out_path: str) -> str:
     return out_path
 
 def download_full_video(url: str, out_path: str) -> str:
-    """Download the full video at a moderate quality. Used as a base for ffmpeg cuts.
+    """Download the full video at 720p with merged audio. Used as a base for ffmpeg cuts.
 
-    480p ceiling gives enough pixels for tight 9:16 vertical crops while
-    keeping the temp file under ~500MB for an 80-min video. Going to 720p
-    doubles the size and the per-clip encode time with marginal visual gain
-    because the final encode is 1080x1920 anyway and crf 20 already loses detail.
+    Uses bestvideo (720p MP4 DASH) + bestaudio (m4a) and merges them with
+    ffmpeg into a single mp4. This gives us 720p video with audio in one
+    file — the section cuts via `-c copy` are then instant and lossless.
+
+    The DASH merge adds ~30s but is done once for all clips. Temp file
+    ~420 MB for an 80-min video.
     """
     result = subprocess.run([
         YT_DLP,
-        "-f", "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
+        "-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
         "-o", out_path,
         "--no-playlist",
         "--no-part",
+        "--merge-output-format", "mp4",
         "--js-runtimes", f"deno:{DENO}",
         url
     ], capture_output=True, text=True, timeout=600)
@@ -90,22 +93,29 @@ def cut_clip_from_video(video_path: str, start: float, end: float, out_path: str
     return out_path
 
 
-def download_clip_section(url: str, start: float, end: float, out_path: str, clip_index: int) -> str:
-    """Legacy per-section download. Slow, kept for fallback only."""
-    output = out_path.replace(".mp4", f"_clip{clip_index}.mp4")
+def download_clip_section(url: str, start: float, end: float, out_path: str, clip_index: int = 0) -> str:
+    """Download only the clip window at 1080p via yt-dlp section download.
+
+    This is the PRIMARY download method. 1080p source means the 9:16 crop
+    is 608x1080 before scaling to 1080x1920 — only 1.78x upscale instead
+    of 2.7x from 720p. Each 25s section is ~50-80 MB.
+    """
     result = subprocess.run([
         YT_DLP,
         "--download-sections", f"*{start}-{end}",
-        "-S", "res:1080,ext:mp4:m4a",
-        "-o", output,
+        "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
+        "-o", out_path,
         "--no-playlist",
         "--no-part",
         "--js-runtimes", f"deno:{DENO}",
+        "--merge-output-format", "mp4",
         url
     ], capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        raise RuntimeError(f"Section download failed: {result.stderr[:500]}")
-    return output
+        raise RuntimeError(f"1080p section download failed: {result.stderr[:500]}")
+    if not os.path.exists(out_path):
+        raise RuntimeError(f"1080p section download produced no file at {out_path}")
+    return out_path
 
 def get_video_duration(video_path: str) -> float:
     result = subprocess.run([

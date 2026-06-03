@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 from faster_whisper import WhisperModel
 from pathlib import Path
 
@@ -7,7 +10,7 @@ def get_model():
     global _model
     if _model is None:
         _model = WhisperModel(
-            "tiny", device="cpu", compute_type="int8",
+            "base.en", device="cpu", compute_type="int8",
             cpu_threads=4, num_workers=1
         )
     return _model

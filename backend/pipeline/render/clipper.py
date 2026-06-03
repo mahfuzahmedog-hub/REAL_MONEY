@@ -57,13 +57,19 @@ def process_clip(
     sub_filter = _escape_ass_path(ass_path) if ass_path and Path(ass_path).exists() and Path(ass_path).stat().st_size > 0 else ""
     emojis = look.build_emoji_reaction_filter(punchline_reactions or [])
 
-    parts = [crop, grade, zoom]
+    endcard = look.build_endcard_filter(brand_text, duration, mood)
+    progress_bar = look.build_progress_bar_filter(duration)
+    parts = [crop, grade, zoom, "unsharp=5:5:1.0:5:5:0.0"]
     if hook:
         parts.append(hook)
     if watermark:
         parts.append(watermark)
     if emojis:
         parts.append(emojis)
+    if endcard:
+        parts.append(endcard)
+    if progress_bar:
+        parts.append(progress_bar)
     if sub_filter:
         parts.append(sub_filter)
     vf = ",".join(parts)
@@ -81,11 +87,14 @@ def process_clip(
             f";[music_raw][side]sidechaincompress="
             f"threshold=0.1:ratio=5:attack=25:release=300"
             f":level_sc=1.0[ducked]"
-            f";[speech][ducked]amix=inputs=2:duration=first[a]"
+            f";[speech][ducked]amix=inputs=2:duration=first[mixed]"
+            f";[mixed]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
         )
         map_flags = ["-map", "[v]", "-map", "[a]"]
     else:
-        filter_complex += f";[0:a]acopy[a]"
+        filter_complex += (
+            f";[0:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+        )
         map_flags = ["-map", "[v]", "-map", "[a]"]
 
     cmd.extend(["-filter_complex", filter_complex])
@@ -93,7 +102,7 @@ def process_clip(
     cmd.extend([
         "-c:v", "libx264",
         "-preset", "medium",
-        "-crf", "20",
+        "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
