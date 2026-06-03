@@ -561,11 +561,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                                     for w in seg["words"]
                                 ]
                             rebased.append(reb)
-                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
+                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
                     else:
-                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
+                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
                 else:
-                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood)
+                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
                 if not ass_path:
                     ass_path = os.path.join(str(output_dir_path), f"subs_{i:02d}.ass")
                     Path(ass_path).write_text("", encoding="utf-8")
