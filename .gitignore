@@ -9,3 +9,4 @@ __pycache__/
 backend/venv/
 backend/output/*.zip
 output/smoke_test_status/
+backend/data/.cache_hadith/
