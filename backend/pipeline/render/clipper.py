@@ -5,6 +5,18 @@ from ..config import FFMPEG
 from . import look
 from . import framing
 
+def get_duration(video_path: str) -> float:
+    from ..config import FFPROBE
+    r = subprocess.run([
+        FFPROBE, "-v", "error", "-show_entries",
+        "format=duration", "-of", "csv=p=0", video_path
+    ], capture_output=True, text=True)
+    try:
+        return float(r.stdout.strip())
+    except (ValueError, TypeError):
+        return 10.0
+
+
 def get_probe(video_path: str) -> dict:
     """Use ffprobe for reliable width/height detection."""
     from ..config import FFPROBE
@@ -36,14 +48,16 @@ def process_clip(
     action_center: dict | None = None,
 ) -> str:
     probe = get_probe(video_path)
+    duration = get_duration(video_path)
     crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
     grade = look.get_grade_filter(mood)
+    zoom = look.build_zoom_filter(duration, punchline_reactions)
     hook = look.build_hook_filter(caption_hook, mood)
     watermark = look.build_brand_watermark_filter(brand_text, mood) if brand_text else ""
     sub_filter = _escape_ass_path(ass_path) if ass_path and Path(ass_path).exists() and Path(ass_path).stat().st_size > 0 else ""
     emojis = look.build_emoji_reaction_filter(punchline_reactions or [])
 
-    parts = [crop, grade]
+    parts = [crop, grade, zoom]
     if hook:
         parts.append(hook)
     if watermark:
@@ -61,7 +75,14 @@ def process_clip(
 
     if music_path:
         cmd.extend(["-i", music_path])
-        filter_complex += f";[1:a]volume={music_volume}[music];[0:a][music]amix=inputs=2:duration=first[a]"
+        filter_complex += (
+            f";[0:a]asplit=2[side][speech]"
+            f";[1:a]volume={music_volume}[music_raw]"
+            f";[music_raw][side]sidechaincompress="
+            f"threshold=0.1:ratio=5:attack=25:release=300"
+            f":level_sc=1.0[ducked]"
+            f";[speech][ducked]amix=inputs=2:duration=first[a]"
+        )
         map_flags = ["-map", "[v]", "-map", "[a]"]
     else:
         filter_complex += f";[0:a]acopy[a]"

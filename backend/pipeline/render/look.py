@@ -136,6 +136,30 @@ def find_punchline_reactions(transcript: list, clip_start: float, clip_duration:
     return deduped[:3]
 
 
+def build_zoom_filter(clip_duration: float, punchline_reactions: list | None = None) -> str:
+    """Ken Burns slow zoom (1.0x -> 1.15x over clip) + punchline zoom spikes.
+
+    At punchline timestamps, briefly zooms to ~1.3x with a triangular ease,
+    then resumes the slow Ken Burns zoom. Falls back to pure Ken Burns if no
+    reactions provided.
+    """
+    rate = 0.15 / max(clip_duration, 1.0)
+
+    spike_parts = []
+    for r in (punchline_reactions or []):
+        t = r["t"]
+        spike_parts.append(f"max(0,0.3*(1-abs(time-{t:.1f})/0.5))")
+    spike_expr = "+".join(spike_parts) if spike_parts else "0"
+
+    z = f"min(1.5,1+{rate:.5f}*time+({spike_expr}))"
+    return (
+        f"zoompan=z='{z}'"
+        f":x='iw/2-(iw/zoom/2)'"
+        f":y='ih/2-(ih/zoom/2)'"
+        f":d=1:fps=30:s=1080x1920"
+    )
+
+
 def build_emoji_reaction_filter(reactions: list) -> str:
     if not reactions:
         return ""
