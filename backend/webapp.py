@@ -28,6 +28,7 @@ from pipeline.orchestrator import (
     OUTPUT_DIR,
 )
 from pipeline.render.music import get_track_counts
+from instagram import get_client as get_ig_client
 
 BACKEND_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BACKEND_DIR / "static"
@@ -133,6 +134,58 @@ async def root():
     if not index.exists():
         return {"error": "static/index.html not found"}
     return FileResponse(index)
+
+
+# ---------- Instagram (Step 6 wire-up — endpoints live, logic lands in Step 6) ----------
+
+class IGLoginRequest(BaseModel):
+    username: str
+    password: str
+    code: str | None = None
+
+
+class IGPostRequest(BaseModel):
+    caption: str | None = None
+
+
+@app.get("/api/instagram/status")
+async def ig_status():
+    return get_ig_client().get_status()
+
+
+@app.post("/api/instagram/login")
+async def ig_login(req: IGLoginRequest):
+    client = get_ig_client()
+    try:
+        result = client.login(req.username, req.password, req.code)
+        return result
+    except NotImplementedError:
+        return {"ok": False, "error": "Instagram login not yet implemented (lands in Step 6)"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/instagram/logout")
+async def ig_logout():
+    get_ig_client().logout()
+    return {"ok": True}
+
+
+@app.post("/api/instagram/post/{job_id}/{index}")
+async def ig_post(job_id: str, index: int, req: IGPostRequest):
+    status = get_status(job_id)
+    if not status.get("done"):
+        raise HTTPException(400, "Job not complete")
+    clip_path = get_clip_path(job_id, index)
+    if not clip_path or not Path(clip_path).exists():
+        raise HTTPException(404, "Clip not found")
+    try:
+        result = get_ig_client().post_reel(Path(clip_path), req.caption or "")
+        return result
+    except NotImplementedError:
+        return {"ok": False, "error": "Instagram post not yet implemented (lands in Step 6)"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 if STATIC_DIR.exists():
