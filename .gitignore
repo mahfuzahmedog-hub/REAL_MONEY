@@ -10,3 +10,6 @@ backend/venv/
 backend/output/*.zip
 output/smoke_test_status/
 backend/data/.cache_hadith/
+backend/.ig_session.json
+backend/start.py.pid
+backend/webapp.log
