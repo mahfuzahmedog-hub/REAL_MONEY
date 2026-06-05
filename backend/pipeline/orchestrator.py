@@ -80,9 +80,16 @@ class PipelineStatus:
         }
 
 _statuses: dict[str, PipelineStatus] = {}
+_last_cleanup = 0.0
+_CLEANUP_INTERVAL = 60.0  # seconds; don't scan dict on every status call
 
-def _stale_cleanup():
+
+def _stale_cleanup(force: bool = False):
+    global _last_cleanup
     now = time.time()
+    if not force and now - _last_cleanup < _CLEANUP_INTERVAL:
+        return
+    _last_cleanup = now
     stale = [jid for jid, s in _statuses.items()
              if s.progress == 100 and now - s.created_at > STATUS_TTL_SEC]
     for jid in stale:

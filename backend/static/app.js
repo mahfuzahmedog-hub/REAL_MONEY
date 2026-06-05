@@ -268,14 +268,17 @@ async function pollJob(jobId) {
   const $clips = document.getElementById("clips-container");
 
   let lastClips = -1;
+  let stopped = false;
 
   const tick = async () => {
+    if (stopped) return;
     let d;
     try {
       d = await API.status(jobId);
     } catch (ex) {
       $err.textContent = `Backend error: ${ex.message}`;
       $err.hidden = false;
+      setTimeout(tick, document.hidden ? 10000 : 3000);
       return;
     }
     $fill.style.width = `${d.progress || 0}%`;
@@ -309,11 +312,13 @@ async function pollJob(jobId) {
       $cancel.textContent = "Cancelled";
       return;
     }
-    setTimeout(tick, 2000);
+    // Back off polling when tab is hidden — saves CPU on long renders.
+    setTimeout(tick, document.hidden ? 10000 : 2000);
   };
   tick();
 
   $cancel.addEventListener("click", async () => {
+    stopped = true;
     try {
       await API.cancel(jobId);
       toast("Cancelled", "info");
