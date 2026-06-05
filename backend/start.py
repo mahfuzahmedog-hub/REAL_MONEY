@@ -96,14 +96,27 @@ def start() -> None:
 
     flags = 0
     if sys.platform == "win32":
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        # Use pythonw.exe if available (no console at all -> immune to console-close events)
+        python_exe = str(VENV_PYTHON)
+        pythonw = VENV_PYTHON.parent / "pythonw.exe"
+        if pythonw.exists():
+            python_exe = str(pythonw)
+        # CREATE_NO_WINDOW alone: process gets a hidden console, NO parent console inheritance.
+        # Don't combine with DETACHED_PROCESS (mutually exclusive on Windows).
+        # CREATE_NEW_PROCESS_GROUP: immune to CTRL+C from parent's console.
+        # CREATE_BREAKAWAY_FROM_JOB: escape parent's job object (required so the webapp
+        #   outlives opencode's bash tool closing its PowerShell process).
         CREATE_NO_WINDOW = 0x08000000
-        flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+    else:
+        python_exe = str(VENV_PYTHON)
 
     p = subprocess.Popen(
-        [str(VENV_PYTHON), "-u", str(BACKEND_DIR / "webapp.py")],
+        [python_exe, "-u", str(BACKEND_DIR / "webapp.py")],
         cwd=str(BACKEND_DIR),
+        stdin=subprocess.DEVNULL,
         stdout=open(BACKEND_DIR / "webapp.log", "ab"),
         stderr=subprocess.STDOUT,
         creationflags=flags,
@@ -121,10 +134,15 @@ def start() -> None:
     url = f"http://127.0.0.1:{UI_PORT}"
     print(f"[start.py] Ready at {url}")
     print(f"[start.py] Opening browser...")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    # Don't block on webbrowser.open (it can hang on Windows if the default browser
+    # is misconfigured). Fire-and-forget via thread.
+    import threading
+    def _open_browser():
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    threading.Thread(target=_open_browser, daemon=True).start()
     print(f"[start.py] Press Ctrl+C to stop (or run 'python start.py --stop')")
 
 
