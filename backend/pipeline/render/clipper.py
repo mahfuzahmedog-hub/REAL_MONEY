@@ -71,9 +71,14 @@ def process_clip(
     action_center: dict | None = None,
     source_is_vertical: bool = False,
     subtitle_style: str = "default",
+    clip_duration: float | None = None,
 ) -> str:
     probe = get_probe(video_path)
     duration = get_duration(video_path)
+    if clip_duration is not None and clip_duration > 0:
+        encode_duration = min(clip_duration, duration)
+    else:
+        encode_duration = duration
     # If source is already 9:16 vertical, skip the smart-crop and just scale.
     # Preserves quality (no re-encoding crop) and respects the original framing.
     if source_is_vertical or (probe["height"] > probe["width"] and probe["width"] >= 540):
@@ -81,14 +86,14 @@ def process_clip(
     else:
         crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
     grade = look.get_grade_filter(mood)
-    zoom = look.build_zoom_filter(duration, punchline_reactions)
+    zoom = look.build_zoom_filter(encode_duration, punchline_reactions)
     hook = look.build_hook_filter(caption_hook, mood, style=subtitle_style)
     watermark = look.build_brand_watermark_filter(brand_text, mood, style=subtitle_style) if brand_text else ""
     sub_filter = _escape_ass_path(ass_path) if ass_path and Path(ass_path).exists() and Path(ass_path).stat().st_size > 0 else ""
     emojis = look.build_emoji_reaction_filter(punchline_reactions or [])
 
-    endcard = look.build_endcard_filter(brand_text, duration, mood, style=subtitle_style)
-    progress_bar = look.build_progress_bar_filter(duration)
+    endcard = look.build_endcard_filter(brand_text, encode_duration, mood, style=subtitle_style)
+    progress_bar = look.build_progress_bar_filter(encode_duration)
     parts = [crop, grade, zoom, "unsharp=5:5:1.0:5:5:0.0"]
     if hook:
         parts.append(hook)
@@ -145,6 +150,8 @@ def process_clip(
 
     cmd.extend(["-filter_complex", filter_complex])
     cmd.extend(map_flags)
+    if encode_duration and encode_duration > 0:
+        cmd.extend(["-t", f"{encode_duration:.3f}"])
     cmd.extend([
         "-c:v", "libx264",
         "-preset", "medium",
