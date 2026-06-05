@@ -201,7 +201,7 @@ def _load_keys():
 
 _VIRAL_PROMPT = """You are a short-form video editor for Islamic Hedayet, an Instagram page sharing Islamic reminders, Quran verses, hadith, and scholar quotes. You understand what performs on Instagram Reels, TikTok, and YouTube Shorts in 2026.
 
-Your job is to find 3-5 clips from this transcript that will perform well as vertical reels for Muslim audiences seeking authentic Islamic content.
+Your job is to find EXACTLY {max_clips} clips from this transcript that will perform well as vertical reels for Muslim audiences seeking authentic Islamic content. Return EXACTLY {max_clips} clips — no more, no fewer.
 
 A great Islamic clip MUST have:
 - A strong HOOK in the first 3 seconds that creates reflection, curiosity, or emotional pull
@@ -218,12 +218,21 @@ THEOLOGICAL SAFETY RULES (HARD GATES - violations will be rejected):
 - NEVER use music, beat drops, or instrumental references. This page uses vocal nasheeds and Quran recitation only
 - NEVER use comedy/punchline structure. This is NOT a comedy page
 
-ISLAMIC HOOK FORMULAS (use one per clip):
-- QURAN_OPENER: "Allah says: {verse excerpt}..." (real verse only)
-- HADITH_OPENER: "The Prophet ﷺ said: {hadith excerpt}..." (real hadith only)
-- REFLECTION: a thoughtful question or observation that prompts reflection
-- REMINDER: a short, direct reminder of faith, prayer, gratitude, or patience
-- STORY: a brief story of a Prophet, Companion, or righteous person
+ISLAMIC HOOK FORMULAS (pick the strongest one per clip — preference order below):
+1. DECLARATIVE_STATEMENT (HIGHEST CONVERSION — style: "X is Y"): a single bold truth, 3-6 words, no preamble.
+   Examples: "Real Success is the Hereafter", "Patience is a form of Worship", "Dunya is a Test, Jannah is the Goal"
+2. QURAN_OPENER: "Allah says: <verse excerpt>..." (real verse only)
+3. HADITH_OPENER: "The Prophet ﷺ said: <hadith excerpt>..." (real hadith only)
+4. REFLECTION: a thoughtful question that prompts reflection (e.g., "What if the thing you lost was protecting you?")
+5. REMINDER: a short, direct reminder of faith, prayer, gratitude, or patience
+6. STORY: a brief story of a Prophet, Companion, or righteous person
+
+The DECLARATIVE_STATEMENT style is the new gold standard. Look for the moment in the transcript where the speaker states a clear, powerful truth in 4-7 words. That becomes the entire caption_hook. Examples of what works:
+- "The Prophet ﷺ smiled before he spoke" → "He Smiled Before He Spoke"
+- "Everything happens for a reason, we just don't know it" → "Allah's Plan is Always Better"
+- "If you want peace, make dhikr" → "Peace Lives in Dhikr"
+- "Paradise is under the feet of mothers" → "Jannah is Under Her Feet"
+- "Dua is the weapon of the believer" → "Your Weapon is Dua"
 
 VALID MOODS (pick exactly one per clip):
 - reflective: thoughtful, contemplative content (e.g., Quran reflection)
@@ -248,20 +257,21 @@ Scoring criteria (1-10 each):
 - shareability: would a Muslim send this to family/WhatsApp group?
 
 Also generate:
-- caption_hook: a punchy on-screen text overlay for the first 2 seconds (max 8 words, Islamic-friendly, no hashtags, no "subscribe", no "like if you agree")
+- caption_hook: a punchy on-screen text overlay for the first 2 seconds (3-7 words, ISLAMIC-FRIENDLY, declarative or strong imperative, no hashtags, no "subscribe", no "like if you agree", no "wait for it", no "watch till the end", no "you won't believe"). Examples that work: "Real Success is the Hereafter", "Your Duas Are Not Wasted", "Trust Allah's Timing", "Jannah is Worth the Wait"
 - mood: one of [reflective, motivational, peaceful, scholarly, devotional]
 - pillar: one of the 8 content pillars above
 - reference_claim: if the clip mentions a specific Quran verse or hadith, include the reference EXACTLY as it appears in the transcript (e.g., "Quran 2:255" or "Bukhari 1"). If no specific reference, leave empty string. DO NOT INVENT REFERENCES.
 
 Respond ONLY with a valid JSON array. No explanation, no markdown, no preamble.
-Format: [{"start": float, "end": float, "hook_strength": int, "retention": int, "shareability": int, "reason": str, "mood": str, "pillar": str, "caption_hook": str, "reference_claim": str}]
+Format: [array of objects with keys: start, end, hook_strength, retention, shareability, reason, mood, pillar, caption_hook, reference_claim]
 
 Rules:
-- Each clip must be 15-40 seconds long
+- Return EXACTLY {max_clips} clips
+- Each clip must be 15-40 seconds long (cap at 40s even if transcript segment is longer)
 - Do not pick clips that start mid-sentence or mid-thought
 - Prefer clips where total score (hook_strength + retention + shareability) >= 20
-- Return clips sorted by total score descending
 - If the transcript contains Arabic, the first 3 seconds should often start with the Arabic (for the dual-frame overlay)
+- Prioritize clips that contain a DECLARATIVE_STATEMENT (X is Y pattern) — these have the highest viral potential
 """
 
 def _clip_array_to_agent1_format(clips: list, niche: str = "") -> dict:
@@ -386,7 +396,7 @@ def _format_transcript(transcript: list, max_chars: int = 15000) -> str:
 
 def analyze_transcript_agent1(
     transcript: list, duration: float,
-    niche: str = "general", platform: str = "all"
+    niche: str = "general", platform: str = "all", max_clips: int = 3,
 ) -> dict:
 
     if not transcript:
@@ -410,6 +420,8 @@ def analyze_transcript_agent1(
 
     all_raw_clips = []
     any_failed = False
+    max_clips_int = max(1, min(10, int(max_clips or 3)))
+    viral_prompt = _VIRAL_PROMPT.format(max_clips=max_clips_int)
 
     for chunk in chunks:
         chunk_text = filter_segments(chunk, max_chars=6000)
@@ -420,7 +432,7 @@ def analyze_transcript_agent1(
             f"\n\nTRANSCRIPT:\n{chunk_text}"
         )
         try:
-            data = _call_ai(_VIRAL_PROMPT, user_message, "clip_finder")
+            data = _call_ai(viral_prompt, user_message, "clip_finder")
         except Exception:
             any_failed = True
             continue
@@ -465,7 +477,8 @@ def analyze_transcript_agent1(
             deduped.append(c)
 
     deduped.sort(key=lambda x: x["viral_score"], reverse=True)
-    deduped = deduped[:8]
+    max_keep = max(1, min(10, int(max_clips or 3)))
+    deduped = deduped[:max_keep]
     for i, c in enumerate(deduped):
         c["id"] = f"clip_{i+1:02d}"
 

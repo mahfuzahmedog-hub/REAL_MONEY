@@ -37,34 +37,51 @@ def check_duration(url: str) -> float:
 
 
 def get_video_info(url: str) -> dict:
-    """Get YouTube video metadata: title, uploader/channel, duration.
+    """Get YouTube video metadata: title, uploader/channel, duration, aspect ratio.
 
-    Returns dict with keys: title, uploader, channel, duration (any may be empty).
+    Returns dict with keys: title, uploader, channel, duration, width, height, aspect_ratio,
+    is_vertical (any may be empty/zero).
     Uses yt-dlp --print to fetch metadata quickly (no download).
     """
     try:
         result = subprocess.run([
             YT_DLP,
-            "--print", "%(title)s|||%(uploader)s|||%(channel)s|||%(duration)s",
+            "--print",
+            "%(title)s|||%(uploader)s|||%(channel)s|||%(duration)s|||%(width)s|||%(height)s",
             "--no-playlist",
             "--no-warnings",
             "--js-runtimes", f"deno:{DENO}",
             url
         ], capture_output=True, text=True, timeout=30)
         if result.returncode != 0 or not result.stdout.strip():
-            return {"title": "", "uploader": "", "channel": "", "duration": 0.0}
+            return {"title": "", "uploader": "", "channel": "", "duration": 0.0,
+                    "width": 0, "height": 0, "aspect_ratio": 0.0, "is_vertical": False}
         parts = result.stdout.strip().split("|||")
-        if len(parts) < 4:
-            parts = parts + [""] * (4 - len(parts))
+        if len(parts) < 6:
+            parts = parts + [""] * (6 - len(parts))
         try:
             dur = float(parts[3]) if parts[3] else 0.0
         except ValueError:
             dur = 0.0
+        try:
+            w = int(parts[4]) if parts[4] else 0
+        except ValueError:
+            w = 0
+        try:
+            h = int(parts[5]) if parts[5] else 0
+        except ValueError:
+            h = 0
+        aspect = (w / h) if (w and h) else 0.0
+        is_vertical = bool(w and h and h > w)
         return {
             "title": parts[0].strip(),
             "uploader": parts[1].strip(),
             "channel": parts[2].strip() or parts[1].strip(),
             "duration": dur,
+            "width": w,
+            "height": h,
+            "aspect_ratio": aspect,
+            "is_vertical": is_vertical,
         }
     except Exception:
         return {"title": "", "uploader": "", "channel": "", "duration": 0.0}

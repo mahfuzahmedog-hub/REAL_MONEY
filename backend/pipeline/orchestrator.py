@@ -59,6 +59,9 @@ class PipelineStatus:
         self.cancelled = False
         self.created_at = time.time()
         self.job_id: str | None = None
+        self.max_clips: int = 3
+        self.subtitle_style: str = "reference"
+        self.source_is_vertical: bool = False
 
     def to_dict(self):
         return {
@@ -70,6 +73,9 @@ class PipelineStatus:
             "video_title": self.video_title,
             "video_channel": getattr(self, "video_channel", None),
             "metadata_path": self.metadata_path,
+            "max_clips": self.max_clips,
+            "subtitle_style": self.subtitle_style,
+            "source_is_vertical": self.source_is_vertical,
             "done": self.progress == 100
         }
 
@@ -167,9 +173,15 @@ def _energy_clip_to_agent1(ec: dict, index: int) -> dict:
         "caption_hook": ""
     }
 
-async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode: bool = False, brand_text: str = ""):
+async def run_pipeline(
+    url: str, job_id: str,
+    niche: str = "islamic", quick_mode: bool = False, brand_text: str = "",
+    max_clips: int = 3, subtitle_style: str = "reference",
+):
     s = PipelineStatus()
     s.job_id = job_id
+    s.max_clips = max(1, min(10, int(max_clips or 3)))
+    s.subtitle_style = (subtitle_style or "reference").lower()
     _statuses[job_id] = s
     _save_status(s)
 
@@ -190,7 +202,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
             s.progress = 3
             duration = downloader.check_duration(url)
             s.video_title = url.split("/")[-1]
-            _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min), quick_mode={quick_mode}")
+            _log(f"Duration: {duration:.0f}s ({duration/60:.0f} min), quick_mode={quick_mode}, max_clips={s.max_clips}, subtitle_style={s.subtitle_style}")
             if duration < 30:
                 raise ValueError(f"Video too short ({duration:.0f}s). Minimum 30 seconds.")
 
@@ -200,6 +212,9 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                 if info and (info.get("title") or info.get("uploader")):
                     s.video_title = info.get("title") or s.video_title
                     s.video_channel = info.get("channel") or info.get("uploader") or ""
+                    s.source_is_vertical = bool(info.get("is_vertical")) or info.get("aspect_ratio", 0) and float(info.get("aspect_ratio", 0)) < 0.7
+                    if s.source_is_vertical:
+                        _log(f"  Source is already 9:16 vertical - will skip smart-crop")
                     _log(f"  Source: {s.video_title} | Channel: {s.video_channel}")
             except Exception as e:
                 _log(f"  get_video_info failed: {e}")
@@ -255,7 +270,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                     _log("Refining with Agent 1 using windowed transcript...")
                     s.stage = "analyzing"
                     s.progress = 45
-                    agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                    agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche, max_clips=s.max_clips)
                     refined = agent1_result.get("clips", [])
                     _save_status(s)
                     if refined and len(refined) >= 3:
@@ -269,7 +284,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                     s.stage = "analyzing"
                     s.progress = 45
                     try:
-                        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                        agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche, max_clips=s.max_clips)
                         refined = agent1_result.get("clips", [])
                         if refined and len(refined) >= 3:
                             agent1_clips = refined
@@ -294,7 +309,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                 _log("Stage 5/8: Analyzing with Agent 1 (Zen)...")
                 s.stage = "analyzing"
                 s.progress = 52
-                agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche)
+                agent1_result = ai_analyzer.analyze_transcript_agent1(transcript, duration, niche=niche, max_clips=s.max_clips)
                 agent1_clips = agent1_result.get("clips", [])
                 _log(f"Agent 1 found {len(agent1_clips)} clips, low_confidence={agent1_result.get('low_confidence')}")
                 _save_status(s)
@@ -341,6 +356,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                 _log(f"Video analyzer adjusted {len(agent1_clips)} clips")
             except Exception as e:
                 _log(f"Video analyzer skipped: {e}")
+
+            # Cap to user-requested max_clips
+            if len(agent1_clips) > s.max_clips:
+                _log(f"Capping to max_clips={s.max_clips} (was {len(agent1_clips)})")
+                agent1_clips = agent1_clips[:s.max_clips]
 
             _log(f"Stage 6/8: Generating metadata with Agent 2 (Zen)...")
             s.stage = "generating metadata"
@@ -565,11 +585,11 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                                     for w in seg["words"]
                                 ]
                             rebased.append(reb)
-                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
+                        ass_path = subtitler.write_ass(rebased, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text, style=s.subtitle_style)
                     else:
-                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
+                        ass_path = subtitler.write_ass(clip_transcript, 0, clip_duration, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text, style=s.subtitle_style)
                 else:
-                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text)
+                    ass_path = subtitler.write_ass(transcript, clip_start, clip_end, str(output_dir_path), meta.get("hook_text", "") or caption_hook, filename=f"subs_{i:02d}.ass", mood=clip_mood, brand_text=brand_text, style=s.subtitle_style)
                 if not ass_path:
                     ass_path = os.path.join(str(output_dir_path), f"subs_{i:02d}.ass")
                     Path(ass_path).write_text("", encoding="utf-8")
@@ -590,7 +610,7 @@ async def run_pipeline(url: str, job_id: str, niche: str = "islamic", quick_mode
                 action_center = detect_action_center(section_path, sample_seconds=min(2.0, clip_duration / 2))
                 if action_center:
                     _log(f"    Action center: w={action_center['w']} h={action_center['h']} x={action_center['x']} y={action_center['y']}")
-                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center)
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center, source_is_vertical=s.source_is_vertical)
 
                 final_size = os.path.getsize(final_path) / (1024 * 1024)
                 _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")

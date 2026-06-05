@@ -46,10 +46,16 @@ def process_clip(
     brand_text: str = "",
     punchline_reactions: list | None = None,
     action_center: dict | None = None,
+    source_is_vertical: bool = False,
 ) -> str:
     probe = get_probe(video_path)
     duration = get_duration(video_path)
-    crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
+    # If source is already 9:16 vertical, skip the smart-crop and just scale.
+    # Preserves quality (no re-encoding crop) and respects the original framing.
+    if source_is_vertical or (probe["height"] > probe["width"] and probe["width"] >= 540):
+        crop = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black"
+    else:
+        crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
     grade = look.get_grade_filter(mood)
     zoom = look.build_zoom_filter(duration, punchline_reactions)
     hook = look.build_hook_filter(caption_hook, mood)

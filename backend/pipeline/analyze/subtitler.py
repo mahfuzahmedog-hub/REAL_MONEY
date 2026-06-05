@@ -2,11 +2,13 @@ import re
 from pathlib import Path
 
 MAX_WORDS_PER_CARD = 4
+MAX_WORDS_PER_CARD_REFERENCE = 3  # tighter, 2-line, like the Mufti Menk reference
 HIGHLIGHT_COLOR = "&H00FFD700"  # gold (default)
 ISLAMIC_SACRED_COLOR = "&H0000C040"  # green for Allah/Jannah/Quran
 ISLAMIC_WARNING_COLOR = "&H004040FF"  # red for Jahannam/sin/warning
 HOOK_COLOR = "&H00FFFFFF"  # white hook text
 HOOK_BG_COLOR = "&H80000000"  # semi-transparent black
+REFERENCE_KEYWORD_COLOR = "&H0000FFFF"  # cyan keyword highlight (Mufti Menk Shorts style)
 
 ACCENT_COLORS = {
     "hype":         "&H0030FFE0",  # cyan
@@ -181,11 +183,12 @@ def _build_word_level_events(seg: dict, adj_start: float, adj_end: float,
     return events
 
 
-def _split_into_cards(text: str) -> list:
+def _split_into_cards(text: str, style: str = "default") -> list:
     words = text.split()
+    cap = MAX_WORDS_PER_CARD_REFERENCE if style == "reference" else MAX_WORDS_PER_CARD
     cards = []
-    for i in range(0, len(words), MAX_WORDS_PER_CARD):
-        chunk = words[i:i + MAX_WORDS_PER_CARD]
+    for i in range(0, len(words), cap):
+        chunk = words[i:i + cap]
         cards.append(" ".join(chunk))
     return cards
 
@@ -216,12 +219,42 @@ def _time_slice(seg_start: float, seg_end: float, card_index: int, total_cards: 
     return (s, e)
 
 def build_ass(transcript: list, clip_start: float, clip_end: float,
-              hook_text: str = "", mood: str = "hype", brand_text: str = "") -> str:
+              hook_text: str = "", mood: str = "hype", brand_text: str = "",
+              style: str = "default") -> str:
+    """Build an ASS subtitle file.
+
+    style="reference"  -> Mufti Menk Shorts style: white 150px text with cyan keyword
+                          highlight, tight 3-word 2-line layout, center-low position.
+    style="default"    -> bottom-anchored gold-highlight subtitles (original).
+    """
     highlight_words = _get_highlight_words(hook_text)
     accent = _accent_for(mood)
     duration = clip_end - clip_start
+    is_ref = (style or "default").lower() == "reference"
 
-    header = f"""[Script Info]
+    if is_ref:
+        # Reference style: white 150px Arial Black, thick black outline, back pad, bottom-center.
+        # Use ReferenceDefault for 2-line white + cyan keyword (the Mufti Menk Shorts look).
+        header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 1
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: ReferenceDefault,Arial Black,150,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,8,2,2,40,40,520,1
+Style: HookCard,Arial Black,180,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,780,1
+Style: Watermark,Arial,55,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,0,0,3,0,0,3,40,80,90,1
+Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        main_style = "ReferenceDefault"
+        main_margin_v = 520
+    else:
+        header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -237,6 +270,8 @@ Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&HC0000000,-1,0,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
+        main_style = "Default"
+        main_margin_v = 180
 
     events = []
 
@@ -252,7 +287,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     cta_events = _build_cta_events(duration, "Follow for more")
     events.extend(cta_events)
 
-    # 3) Main subtitles
+    # 4) Main subtitles
     for seg in transcript:
         seg_start = seg["start"]
         seg_end = seg["end"]
@@ -263,25 +298,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if adj_end - adj_start < 0.3:
             continue
 
-        word_events = _build_word_level_events(seg, adj_start, adj_end, highlight_words, accent)
-        if word_events:
-            events.extend(word_events)
-            continue
-
         text_upper = seg["text"].upper().strip().replace("'", "")
         if not text_upper:
             continue
 
-        cards = _split_into_cards(text_upper)
+        # For reference style: skip word-level (per-word) karaoke, use 2-line cards
+        # with cyan keyword highlight on the last word of each line (the strongest word)
+        cards = _split_into_cards(text_upper, style)
         total_cards = len(cards)
 
         for i, card_text in enumerate(cards):
             s, e = _time_slice(adj_start, adj_end, i, total_cards)
             if e - s < 0.3:
                 continue
-            highlighted = _highlight_text(card_text, highlight_words, accent)
+            if is_ref:
+                # Highlight the LAST word of the line in cyan (the "punch word")
+                highlighted = _highlight_last_word_cyan(card_text)
+            else:
+                highlighted = _highlight_text(card_text, highlight_words, accent)
             events.append(
-                f"Dialogue: 0,{format_ts_ass(s)},{format_ts_ass(e)},Default,,0,0,0,,{highlighted}"
+                f"Dialogue: 0,{format_ts_ass(s)},{format_ts_ass(e)},{main_style},,0,0,{main_margin_v},,{highlighted}"
             )
 
     if not events:
@@ -290,10 +326,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(events)
 
 
+def _highlight_last_word_cyan(text: str) -> str:
+    """Reference-style highlight: white text with the LAST word in cyan.
+
+    Matches the Mufti Menk Shorts look: e.g. "and success in the" / "next world".
+    The last word of each line is the punch word and gets cyan (REFERENCE_KEYWORD_COLOR).
+    """
+    words = text.split()
+    if not words:
+        return text
+    out = []
+    for i, w in enumerate(words):
+        clean = w.lower().strip(".,!?;:'\"()[]{}")
+        islamic_color = _get_word_color(w)
+        if islamic_color:
+            base = w.upper().replace("'", "")
+            out.append(f"{{\\c{islamic_color}}}{base}{{\\c}}")
+        elif i == len(words) - 1:
+            base = w.upper().replace("'", "")
+            out.append(f"{{\\c{REFERENCE_KEYWORD_COLOR}}}{base}{{\\c}}")
+        else:
+            out.append(w.upper().replace("'", ""))
+    return " ".join(out)
+
+
 def write_ass(transcript: list, clip_start: float, clip_end: float, output_dir: str,
               hook_text: str = "", filename: str = "subs.ass", mood: str = "hype",
-              brand_text: str = "") -> str:
-    ass_content = build_ass(transcript, clip_start, clip_end, hook_text, mood=mood, brand_text=brand_text)
+              brand_text: str = "", style: str = "default") -> str:
+    ass_content = build_ass(transcript, clip_start, clip_end, hook_text, mood=mood, brand_text=brand_text, style=style)
     ass_path = Path(output_dir) / filename
     if not ass_content.strip():
         return ""

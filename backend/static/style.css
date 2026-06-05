@@ -106,6 +106,17 @@ label.row {
 label.row > span { margin: 0; }
 label.row input { width: auto; }
 
+.row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.row-2 > label { margin: 0; }
+.row-2 small { display: block; margin-top: 0.25rem; }
+@media (max-width: 600px) {
+  .row-2 { grid-template-columns: 1fr; }
+}
+
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 code {

@@ -22,8 +22,11 @@ const API = {
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   },
-  startProcess: (url, niche, quickMode, brandText) =>
-    API.post("/api/process", { url, niche, quick_mode: quickMode, brand_text: brandText }),
+  startProcess: (url, niche, quickMode, brandText, maxClips, subtitleStyle) =>
+    API.post("/api/process", {
+      url, niche, quick_mode: quickMode, brand_text: brandText,
+      max_clips: maxClips, subtitle_style: subtitleStyle,
+    }),
   status: (jobId) => API.get(`/api/status/${jobId}`),
   cancel: (jobId) => API.post(`/api/cancel/${jobId}`),
   health: () => API.get("/api/health"),
@@ -85,6 +88,22 @@ function viewForm() {
             ${NICHES.map((n) => `<option value="${n}"${n === "islamic" ? " selected" : ""}>${n}</option>`).join("")}
           </select>
         </label>
+
+        <div class="row-2">
+          <label>
+            <span>How many reels?</span>
+            <input id="max-clips" type="number" min="1" max="10" value="3" />
+            <small class="muted">1 to 10 reels from this video</small>
+          </label>
+          <label>
+            <span>Subtitle style</span>
+            <select id="subtitle-style">
+              <option value="reference" selected>Reference (Mufti Menk style)</option>
+              <option value="default">Default (gold highlight)</option>
+            </select>
+            <small class="muted">Reference: white + cyan keyword, 2-line</small>
+          </label>
+        </div>
 
         <label class="row">
           <input id="quick" type="checkbox" checked />
@@ -215,11 +234,15 @@ function bindForm() {
     const niche = document.getElementById("niche").value;
     const quickMode = document.getElementById("quick").checked;
     const brandText = document.getElementById("brand").value.trim();
+    let maxClips = parseInt(document.getElementById("max-clips").value, 10);
+    if (!Number.isFinite(maxClips)) maxClips = 3;
+    maxClips = Math.max(1, Math.min(10, maxClips));
+    const subtitleStyle = document.getElementById("subtitle-style").value;
     const btn = document.getElementById("start-btn");
     btn.disabled = true;
     btn.textContent = "Starting...";
     try {
-      const r = await API.startProcess(url, niche, quickMode, brandText);
+      const r = await API.startProcess(url, niche, quickMode, brandText, maxClips, subtitleStyle);
       location.hash = `#/job/${r.job_id}`;
     } catch (ex) {
       err.textContent = ex.message;
