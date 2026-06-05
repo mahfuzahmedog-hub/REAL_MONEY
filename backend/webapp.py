@@ -211,8 +211,28 @@ async def root():
     index = STATIC_DIR / "index.html"
     if not index.exists():
         return {"error": "static/index.html not found"}
-    return FileResponse(
-        index,
+    # Inject a cache-busting query string for app.js and style.css based on
+    # the file mtimes. Forces the browser to download the latest version
+    # when files change, even if the HTML itself is cached.
+    try:
+        app_mtime = int((STATIC_DIR / "app.js").stat().st_mtime)
+    except Exception:
+        app_mtime = 0
+    try:
+        css_mtime = int((STATIC_DIR / "style.css").stat().st_mtime)
+    except Exception:
+        css_mtime = 0
+    html = index.read_text(encoding="utf-8")
+    html = html.replace(
+        'href="/static/style.css"',
+        f'href="/static/style.css?v={css_mtime}"',
+    ).replace(
+        'src="/static/app.js"',
+        f'src="/static/app.js?v={app_mtime}"',
+    )
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content=html,
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
@@ -287,6 +307,9 @@ def _is_transient_ig_error(msg: str) -> bool:
 
 
 # Custom static handler with Cache-Control (FastAPI StaticFiles doesn't set any).
+# Use no-cache (must-revalidate) instead of max-age=3600 so the browser always
+# revalidates with the server and gets the latest JS/CSS without forcing a
+# 304 round-trip on every request. StaticFiles is bypassed entirely.
 if STATIC_DIR.exists():
     from fastapi import Request
 
@@ -305,10 +328,12 @@ if STATIC_DIR.exists():
             ".jpg": "image/jpeg",
             ".json": "application/json",
         }.get(ext, "application/octet-stream")
+        # no-cache: serve from cache, but MUST revalidate with the server before using
+        # the cached copy. Browser still gets 304 Not Modified if unchanged (fast).
         return FileResponse(
             target,
             media_type=media,
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": "no-cache, must-revalidate"},
         )
 
 
