@@ -148,14 +148,16 @@ def _run_pipeline_in_thread(
     This keeps the FastAPI event loop free to serve /api/status, /api/clip,
     and other HTTP requests while the (sync-heavy) pipeline is running.
     """
+    if _run_pipeline is None:
+        logging.error(f"[pipeline thread] _run_pipeline not loaded; job {job_id} aborted")
+        return
     try:
-        asyncio.run(run_pipeline(
+        asyncio.run(_run_pipeline(
             url, job_id,
             niche=niche, quick_mode=quick_mode, brand_text=brand_text,
             max_clips=max_clips, subtitle_style=subtitle_style,
         ))
     except Exception as e:
-        import logging
         logging.getLogger("webapp").exception(f"[pipeline thread] job {job_id} crashed: {e}")
 
 

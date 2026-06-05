@@ -78,6 +78,117 @@ def kill_pid(pid: int) -> bool:
     return False
 
 
+def get_cmdline(pid: int) -> str:
+    """Read the full command line of `pid` from its PEB (no WMI / no shell).
+
+    Returns "" on any failure (process gone, access denied, etc.).
+    Works on Windows 7+ and 11 24H2+. Uses NtQueryInformationProcess +
+    ReadProcessMemory to read RTL_USER_PROCESS_PARAMETERS->CommandLine.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_INFORMATION = 0x0400
+        PROCESS_VM_READ = 0x0010
+        PROCESS_BASIC_INFORMATION = 0
+
+        kernel32 = ctypes.windll.kernel32
+        ntdll = ctypes.windll.ntdll
+
+        # PEB offsets (64-bit)
+        PEB_ProcessParameters_off = 0x20
+        RtlUserProcessParameters_CommandLine_off = 0x70
+
+        class UNICODE_STRING(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.USHORT),
+                ("MaxLength", wintypes.USHORT),
+                ("Buffer", ctypes.c_void_p),
+            ]
+
+        class PROCESS_BASIC_INFORMATION_RAW(ctypes.Structure):
+            _fields_ = [
+                ("Reserved1", ctypes.c_void_p),
+                ("PebBaseAddress", ctypes.c_void_p),
+                ("Reserved2", ctypes.c_void_p * 2),
+                ("UniqueProcessId", ctypes.c_void_p),
+                ("Reserved3", ctypes.c_void_p),
+            ]
+
+        NtQueryInformationProcess = ntdll.NtQueryInformationProcess
+        NtQueryInformationProcess.restype = wintypes.LONG
+        NtQueryInformationProcess.argtypes = [
+            wintypes.HANDLE,
+            wintypes.ULONG,
+            ctypes.c_void_p,
+            wintypes.ULONG,
+            ctypes.POINTER(wintypes.ULONG),
+        ]
+        OpenProcess = kernel32.OpenProcess
+        OpenProcess.restype = wintypes.HANDLE
+        OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        ReadProcessMemory = kernel32.ReadProcessMemory
+        ReadProcessMemory.restype = wintypes.BOOL
+        ReadProcessMemory.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        CloseHandle = kernel32.CloseHandle
+        CloseHandle.restype = wintypes.BOOL
+        CloseHandle.argtypes = [wintypes.HANDLE]
+
+        h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+        if not h:
+            return ""
+        try:
+            pbi = PROCESS_BASIC_INFORMATION_RAW()
+            retlen = wintypes.ULONG()
+            status = NtQueryInformationProcess(
+                h, PROCESS_BASIC_INFORMATION,
+                ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(retlen),
+            )
+            if status != 0:
+                return ""
+            peb = pbi.PebBaseAddress
+            if not peb:
+                return ""
+            # Read PEB to get ProcessParameters pointer
+            proc_params_ptr = ctypes.c_void_p()
+            n = ctypes.c_size_t()
+            if not ReadProcessMemory(h, peb + PEB_ProcessParameters_off,
+                                     ctypes.byref(proc_params_ptr),
+                                     ctypes.sizeof(proc_params_ptr),
+                                     ctypes.byref(n)):
+                return ""
+            # Read RTL_USER_PROCESS_PARAMETERS to get UNICODE_STRING CommandLine
+            cmdline = UNICODE_STRING()
+            if not ReadProcessMemory(h, proc_params_ptr.value + RtlUserProcessParameters_CommandLine_off,
+                                     ctypes.byref(cmdline),
+                                     ctypes.sizeof(cmdline),
+                                     ctypes.byref(n)):
+                return ""
+            if not cmdline.Buffer or cmdline.Length == 0:
+                return ""
+            # Read the wide string buffer
+            buf = ctypes.create_unicode_buffer(cmdline.Length // 2 + 1)
+            if not ReadProcessMemory(h, cmdline.Buffer,
+                                     ctypes.cast(buf, ctypes.c_void_p),
+                                     cmdline.Length,
+                                     ctypes.byref(n)):
+                return ""
+            return buf.value
+        finally:
+            CloseHandle(h)
+    except Exception:
+        return ""
+
+
 def _process_parents(pid: int, max_depth: int = 4) -> set[int]:
     """Return set of PIDs in the ancestor chain of `pid` (up to max_depth)."""
     if sys.platform != "win32":
@@ -214,6 +325,7 @@ def kill_orphans(debug: bool = False) -> int:
         print(f"  [kill_orphans] protected={protected_pids}", flush=True)
     # Strict marker: anything launched from this backend dir
     backend_lower = str(BACKEND_DIR).lower()
+    webapp_script = str(BACKEND_DIR / "webapp.py").lower()
     killed = 0
     for i in range(count):
         pid = pids[i]
@@ -239,10 +351,22 @@ def kill_orphans(debug: bool = False) -> int:
             # Real python.exe is something like "...\python.exe" — filter
             if not path.lower().endswith("python.exe"):
                 continue
-            # Strict filter: must be our venv
+            is_ours = False
+            reason = ""
+            # (a) Exe path is inside our backend dir (rare — only true for venv pythonw.exe)
             if backend_lower in path.lower():
+                is_ours = True
+                reason = "exe in backend"
+            if not is_ours:
+                # (b) Cmdline references our webapp.py — this catches ANY python
+                #     interpreter (global Python, Anaconda, venv, etc.) invoking it.
+                cmd = get_cmdline(pid)
+                if cmd and webapp_script in cmd.lower():
+                    is_ours = True
+                    reason = f"cmdline hits webapp.py ({cmd[:80]})"
+            if is_ours:
                 if debug:
-                    print(f"  [kill_orphans] ORPHAN: {pid} {path}", flush=True)
+                    print(f"  [kill_orphans] ORPHAN: {pid} reason={reason}", flush=True)
                 if kill_pid(pid):
                     killed += 1
         finally:
@@ -279,17 +403,14 @@ def start() -> None:
         print(f"[start.py] Killed {n} orphan process(es).")
         time.sleep(0.5)
 
-    existing = read_pid()
-    if existing is not None:
-        if port_in_use(UI_PORT):
+    # If a webapp is still listening on the port (e.g. a non-python process,
+    # or a python we couldn't identify), abort loudly rather than racing.
+    if port_in_use(UI_PORT):
+        existing = read_pid()
+        if existing is not None:
             print(f"[start.py] Webapp already running on :{UI_PORT} (PID {existing}).")
             print(f"[start.py] Open http://127.0.0.1:{UI_PORT} in your browser.")
             return
-        else:
-            print(f"[start.py] Stale PID {existing}, removing.")
-            PID_FILE.unlink(missing_ok=True)
-
-    if port_in_use(UI_PORT):
         print(f"[start.py] Port {UI_PORT} is in use by another process. Stop it first:")
         print(f"          python start.py --stop")
         sys.exit(1)

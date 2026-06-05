@@ -13,3 +13,4 @@ backend/data/.cache_hadith/
 backend/.ig_session.json
 backend/start.py.pid
 backend/webapp.log
+.gstack/
