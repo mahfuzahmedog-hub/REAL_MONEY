@@ -130,11 +130,12 @@ def process_clip(
             f"[base][bg]overlay=0:0[v]"
         )
 
+    trim = f"atrim=0:{encode_duration:.3f},asetpts=PTS-STARTPTS"
     if music_path:
         cmd.extend(["-i", music_path])
         filter_complex += (
-            f";[0:a]asplit=2[side][speech]"
-            f";[1:a]volume={music_volume}[music_raw]"
+            f";[0:a]{trim},asplit=2[side][speech]"
+            f";[1:a]{trim},volume={music_volume}[music_raw]"
             f";[music_raw][side]sidechaincompress="
             f"threshold=0.1:ratio=5:attack=25:release=300"
             f":level_sc=1.0[ducked]"
@@ -144,7 +145,7 @@ def process_clip(
         map_flags = ["-map", "[v]", "-map", "[a]"]
     else:
         filter_complex += (
-            f";[0:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+            f";[0:a]{trim},loudnorm=I=-14:LRA=11:TP=-1.5[a]"
         )
         map_flags = ["-map", "[v]", "-map", "[a]"]
 
