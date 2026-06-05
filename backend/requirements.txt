@@ -12,4 +12,4 @@ requests==2.32.3
 firecrawl-py==4.28.2
 gradio==4.44.0
 huggingface_hub<0.25
-instagrapi==2.1.0
+instagrapi==2.0.3
