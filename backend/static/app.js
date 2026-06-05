@@ -128,7 +128,15 @@ function viewJob(jobId) {
       <h1>Job <code>${escapeHtml(jobId)}</code></h1>
       <a class="back-link" href="#/">&larr; New job</a>
 
-      <div class="card">
+      <div id="not-found-card" class="card not-found hidden">
+        <h3>Job no longer available</h3>
+        <p class="muted">This job ID isn't on the server. It may have expired, been cleaned up, or never existed.</p>
+        <div class="job-actions">
+          <a class="primary" href="#/">Start a new job</a>
+        </div>
+      </div>
+
+      <div id="job-card" class="card">
         <div class="progress-row">
           <div class="progress-bar"><div id="progress-fill" class="progress-fill" style="width:0%"></div></div>
           <span id="progress-text" class="progress-text">0%</span>
@@ -266,6 +274,8 @@ async function pollJob(jobId) {
   const $sourceTitle = document.getElementById("source-title");
   const $sourceChannel = document.getElementById("source-channel");
   const $clips = document.getElementById("clips-container");
+  const $jobCard = document.getElementById("job-card");
+  const $notFound = document.getElementById("not-found-card");
 
   let lastClips = -1;
   let stopped = false;
@@ -279,6 +289,14 @@ async function pollJob(jobId) {
       $err.textContent = `Backend error: ${ex.message}`;
       $err.hidden = false;
       setTimeout(tick, document.hidden ? 10000 : 3000);
+      return;
+    }
+    // Job no longer exists on the server (cleaned up, never existed, etc.).
+    // Stop polling, hide the progress UI, show a friendly "start a new job" card.
+    if (d.stage === "not_found") {
+      stopped = true;
+      if ($jobCard) $jobCard.classList.add("hidden");
+      if ($notFound) $notFound.classList.remove("hidden");
       return;
     }
     $fill.style.width = `${d.progress || 0}%`;

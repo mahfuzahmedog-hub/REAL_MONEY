@@ -217,6 +217,28 @@ form .primary { width: 100%; margin-top: 0.5rem; }
   border-color: #4a1a1a;
 }
 
+.not-found {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  border-left: 4px solid #6b7280;
+}
+.not-found h3 {
+  margin: 0 0 0.5rem 0;
+  color: #374151;
+}
+.not-found .muted {
+  margin-bottom: 1.25rem;
+}
+.not-found .job-actions {
+  justify-content: center;
+}
+:root.dark .not-found {
+  border-left-color: #9ca3af;
+}
+:root.dark .not-found h3 {
+  color: #e5e7eb;
+}
+
 /* Progress */
 .progress-row {
   display: flex;
