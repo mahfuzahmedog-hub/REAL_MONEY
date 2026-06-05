@@ -98,10 +98,11 @@ function viewForm() {
           <label>
             <span>Subtitle style</span>
             <select id="subtitle-style">
+              <option value="creator">Creator (Hormozi/Abdaal) — yellow impact, no box, pop-in</option>
               <option value="reference" selected>Reference (Mufti Menk style)</option>
               <option value="default">Default (gold highlight)</option>
             </select>
-            <small class="muted">Reference: white + cyan keyword, 2-line</small>
+            <small class="muted">Creator: Anton bold, 1 impact word in yellow, bottom gradient, no box</small>
           </label>
         </div>
 

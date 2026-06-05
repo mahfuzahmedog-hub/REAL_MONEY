@@ -4,6 +4,35 @@ All filters are pure ffmpeg filter-graph strings so they can be composed
 into the existing drawtext/crop chain without changing orchestration logic.
 """
 
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
+
+
+def _font(style: str, kind: str) -> str:
+    """Return the fontfile option value for a given style + element kind.
+
+    kind: 'hook' | 'watermark' | 'endcard'
+    creator style: Anton (hook, endcard) + Poppins (watermark)
+    default style: Impact (everything)
+
+    Windows paths need TWO escape steps to survive ffmpeg's filter parser:
+      1. Convert '\\' -> '/'  (backslashes are treated as escape chars)
+      2. Escape the drive colon 'C:/' -> 'C\\:/'  (colon is the option separator)
+      3. Wrap the whole value in single quotes  (paths contain spaces like "vs code")
+    """
+    s = (style or "default").lower()
+    if s == "creator":
+        if kind == "watermark":
+            p = str(FONTS_DIR / "Poppins-ExtraBold.ttf").replace("\\", "/")
+        else:
+            p = str(FONTS_DIR / "Anton-Regular.ttf").replace("\\", "/")
+        p = p.replace("C:/", "C\\:/")
+        return f"'{p}'"
+    return "/Windows/Fonts/impact.ttf"
+
+
 MOOD_COLORS = {
     "hype":      {"primary": "0xFF3030", "accent": "0xFFD000", "grade": "hype"},
     "funny":     {"primary": "0xFFD000", "accent": "0x00FF80", "grade": "funny"},
@@ -50,7 +79,7 @@ def get_accent_color(mood: str) -> str:
     return MOOD_COLORS.get((mood or "").lower(), MOOD_COLORS["hype"])["accent"]
 
 
-def build_endcard_filter(brand_text: str, clip_duration: float, mood: str = "hype") -> str:
+def build_endcard_filter(brand_text: str, clip_duration: float, mood: str = "hype", style: str = "default") -> str:
     """CTA overlay for the last 3 seconds of a clip.
 
     Shows 'FOLLOW FOR MORE' at 38% height and '@BRAND_TEXT' below it,
@@ -62,27 +91,38 @@ def build_endcard_filter(brand_text: str, clip_duration: float, mood: str = "hyp
     safe = (brand_text or "").replace("\\", " ").replace("'", " ").replace(":", "\\:")
     if not safe:
         return ""
+    is_creator = (style or "default").lower() == "creator"
     color = get_hook_color(mood)
+    font = _font(style, "endcard")
+    if is_creator:
+        # Creator style: Anton, big white FOLLOW + yellow @brand
+        main_size, sub_size = 100, 75
+        main_color, sub_color = "white", "0xFFD400"
+        main_border, sub_border = 6, 5
+    else:
+        main_size, sub_size = 80, 60
+        main_color, sub_color = "white", color
+        main_border, sub_border = 5, 4
     t_enable = clip_duration - 3.0
     return (
         f"drawtext=text='FOLLOW FOR MORE'"
-        f":fontfile=/Windows/Fonts/impact.ttf"
-        f":fontsize=80:fontcolor=white"
-        f":borderw=5:bordercolor=black@0.5"
+        f":fontfile={font}"
+        f":fontsize={main_size}:fontcolor={main_color}"
+        f":borderw={main_border}:bordercolor=black@0.7"
         f":shadowx=3:shadowy=3:shadowcolor=black@0.6"
         f":x=(w-text_w)/2:y=h*0.35"
         f":enable='gte(t,{t_enable:.1f})'"
         f",drawtext=text='@{safe}'"
-        f":fontfile=/Windows/Fonts/impact.ttf"
-        f":fontsize=60:fontcolor={color}"
-        f":borderw=4:bordercolor=black@0.5"
+        f":fontfile={font}"
+        f":fontsize={sub_size}:fontcolor={sub_color}"
+        f":borderw={sub_border}:bordercolor=black@0.7"
         f":shadowx=3:shadowy=3:shadowcolor=black@0.6"
         f":x=(w-text_w)/2:y=h*0.46"
         f":enable='gte(t,{t_enable:.1f})'"
     )
 
 
-def build_brand_watermark_filter(brand_text: str, mood: str = "hype") -> str:
+def build_brand_watermark_filter(brand_text: str, mood: str = "hype", style: str = "default") -> str:
     if not brand_text:
         return ""
     safe = (
@@ -91,13 +131,17 @@ def build_brand_watermark_filter(brand_text: str, mood: str = "hype") -> str:
         .replace(":", "\\:")
         .replace("\n", " ")
     )
-    color = get_hook_color(mood)
+    is_creator = (style or "default").lower() == "creator"
+    color = "white" if is_creator else get_hook_color(mood)
+    font = _font(style, "watermark")
+    fs = 55 if is_creator else 34
+    bw = 5 if is_creator else 3
     return (
         f"drawtext=text='{safe}'"
-        f":fontfile=/Windows/Fonts/impact.ttf"
-        f":fontsize=34"
+        f":fontfile={font}"
+        f":fontsize={fs}"
         f":fontcolor={color}"
-        f":borderw=3"
+        f":borderw={bw}"
         f":bordercolor=black@0.85"
         f":shadowx=2:shadowy=2:shadowcolor=black@0.7"
         f":x=w-tw-30"
@@ -106,7 +150,21 @@ def build_brand_watermark_filter(brand_text: str, mood: str = "hype") -> str:
     )
 
 
-def build_hook_filter(caption_hook: str, mood: str = "hype") -> str:
+def _split_hook_lines(text: str, max_words: int = 3) -> list:
+    """Split a hook into <=max_words words per line, balanced.
+
+    "Assist non-muslims in need" -> ["ASSIST NON-MUSLIMS", "IN NEED"]
+    "Trust Allah's plan" -> ["TRUST ALLAH'S PLAN"]
+    """
+    words = text.upper().split()
+    if len(words) <= max_words:
+        return [" ".join(words)]
+    # Split in the middle
+    mid = (len(words) + 1) // 2
+    return [" ".join(words[:mid]), " ".join(words[mid:])]
+
+
+def build_hook_filter(caption_hook: str, mood: str = "hype", style: str = "default") -> str:
     if not caption_hook:
         return ""
     safe = (
@@ -114,11 +172,39 @@ def build_hook_filter(caption_hook: str, mood: str = "hype") -> str:
         .replace("'", " ")
         .replace(":", "\\:")
     )
-    color = get_hook_color(mood)
+    is_creator = (style or "default").lower() == "creator"
+    color = "white" if is_creator else get_hook_color(mood)
     accent = get_accent_color(mood)
+    font = _font(style, "hook")
+    if is_creator:
+        # Creator style: Anton 130px, white, 6px black stroke, no shadow
+        # Auto-wrap to 2 lines so 4-5 word hooks don't overflow the 1080px frame.
+        lines = _split_hook_lines(safe, max_words=3)
+        fs = 130
+        line_h = int(fs * 1.05)
+        base_y = "h*0.06"
+        # First line sits at base_y; subsequent lines stack below at +line_h each
+        # Convert "h*0.06" to pixel offset by using main_h * 0.06 = 115px (for h=1920)
+        # We use drawtext y as integer pixel offset for clean stacking
+        base_px = 115
+        filters = []
+        for i, line in enumerate(lines):
+            y_expr = f"{base_px + i * line_h}"
+            filters.append(
+                f"drawtext=text='{line}'"
+                f":fontfile={font}"
+                f":fontsize={fs}"
+                f":fontcolor={color}"
+                f":borderw=6"
+                f":bordercolor=black@0.95"
+                f":x=(w-text_w)/2"
+                f":y={y_expr}"
+                f":enable='between(t,0,3.0)'"
+            )
+        return ",".join(filters)
     return (
         f"drawtext=text='{safe}'"
-        f":fontfile=/Windows/Fonts/impact.ttf"
+        f":fontfile={font}"
         f":fontsize=78"
         f":fontcolor={color}"
         f":borderw=5"

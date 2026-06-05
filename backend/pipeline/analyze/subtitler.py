@@ -3,7 +3,10 @@ from pathlib import Path
 
 MAX_WORDS_PER_CARD = 4
 MAX_WORDS_PER_CARD_REFERENCE = 3  # tighter, 2-line, like the Mufti Menk reference
+MAX_WORDS_PER_CARD_CREATOR = 3   # Hormozi/Abdaal/MrBeast style: 1-3 words per card
 HIGHLIGHT_COLOR = "&H00FFD700"  # gold (default)
+CREATOR_HIGHLIGHT_COLOR = "&H0000D4FF"  # yellow #FFD400 in BGR (Hormozi/Abdaal style)
+CREATOR_ACCENT_COLOR = "&H00FFE500"     # cyan #00E5FF in BGR (alternative)
 ISLAMIC_SACRED_COLOR = "&H0000C040"  # green for Allah/Jannah/Quran
 ISLAMIC_WARNING_COLOR = "&H004040FF"  # red for Jahannam/sin/warning
 HOOK_COLOR = "&H00FFFFFF"  # white hook text
@@ -185,7 +188,12 @@ def _build_word_level_events(seg: dict, adj_start: float, adj_end: float,
 
 def _split_into_cards(text: str, style: str = "default") -> list:
     words = text.split()
-    cap = MAX_WORDS_PER_CARD_REFERENCE if style == "reference" else MAX_WORDS_PER_CARD
+    if style == "creator":
+        cap = MAX_WORDS_PER_CARD_CREATOR
+    elif style == "reference":
+        cap = MAX_WORDS_PER_CARD_REFERENCE
+    else:
+        cap = MAX_WORDS_PER_CARD
     cards = []
     for i in range(0, len(words), cap):
         chunk = words[i:i + cap]
@@ -223,6 +231,10 @@ def build_ass(transcript: list, clip_start: float, clip_end: float,
               style: str = "default") -> str:
     """Build an ASS subtitle file.
 
+    style="creator"    -> Hormozi/Abdaal/MrBeast creator style: bold Anton, white text
+                          with thick black stroke, NO box, 1-3 words per line, ONE
+                          impact word per line in yellow/cyan and 115% scaled, pop-in
+                          animation. Pairs with a bottom gradient overlay.
     style="reference"  -> Mufti Menk Shorts style: white 150px text with cyan keyword
                           highlight, tight 3-word 2-line layout, center-low position.
     style="default"    -> bottom-anchored gold-highlight subtitles (original).
@@ -230,9 +242,41 @@ def build_ass(transcript: list, clip_start: float, clip_end: float,
     highlight_words = _get_highlight_words(hook_text)
     accent = _accent_for(mood)
     duration = clip_end - clip_start
-    is_ref = (style or "default").lower() == "reference"
+    style_lc = (style or "default").lower()
+    is_ref = style_lc == "reference"
+    is_creator = style_lc == "creator"
 
-    if is_ref:
+    if is_creator:
+        # Creator / Hormozi/Abdaal/MrBeast style:
+        #   - Anton (tall, condensed, super-bold modern font) for max impact
+        #   - White text with 8px black stroke + 1px soft shadow, NO box
+        #   - BorderStyle=1 (no opaque background), BackColour=transparent
+        #   - One impact word per line in yellow (#FFD400) or cyan (#00E5FF)
+        #     at 115% scale (applied per-line via _highlight_creator)
+        #   - Pop-in animation per caption (90% -> 100% over 180ms)
+        #   - Bottom-of-frame position (MarginV 600) so it sits above IG/TT/YT UI
+        #     and is paired with the bottom_gradient.png overlay for readability
+        header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 1
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Creator,Anton,130,&H00FFFFFF,&H00FFD400,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,8,1,2,40,40,600,1
+Style: CreatorAccent,Anton,150,&H0000D4FF,&H00FFD400,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,8,1,2,40,40,600,1
+Style: HookCard,Anton,200,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,1,5,40,40,1000,1
+Style: Watermark,Poppins,55,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,0,3,40,80,90,1
+Style: CTACard,Anton,160,&H00FFFFFF,&H00FFD400,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,6,0,5,40,40,700,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        main_style = "Creator"
+        main_margin_v = 600
+        creator_accent = CREATOR_HIGHLIGHT_COLOR  # yellow #FFD400
+    elif is_ref:
         # Reference style: white 150px Arial Black, thick black outline, back pad, bottom-center.
         # Use ReferenceDefault for 2-line white + cyan keyword (the Mufti Menk Shorts look).
         header = f"""[Script Info]
@@ -246,7 +290,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: ReferenceDefault,Arial Black,150,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,8,2,2,40,40,520,1
 Style: HookCard,Arial Black,180,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,780,1
 Style: Watermark,Arial,55,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,0,0,3,0,0,3,40,80,90,1
-Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
+Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -265,7 +309,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Default,Arial Black,130,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,2,40,40,180,1
 Style: HookCard,Arial Black,180,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,780,1
 Style: Watermark,Arial,55,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,0,0,3,0,0,3,40,80,90,1
-Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&HC0000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
+Style: CTACard,Arial Black,140,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,0,0,5,40,40,700,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -302,8 +346,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not text_upper:
             continue
 
-        # For reference style: skip word-level (per-word) karaoke, use 2-line cards
-        # with cyan keyword highlight on the last word of each line (the strongest word)
         cards = _split_into_cards(text_upper, style)
         total_cards = len(cards)
 
@@ -311,13 +353,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             s, e = _time_slice(adj_start, adj_end, i, total_cards)
             if e - s < 0.3:
                 continue
-            if is_ref:
+            if is_creator:
+                # Creator style: 1-3 words, yellow impact word, pop-in animation
+                highlighted = _highlight_creator(card_text, creator_accent)
+                # Wrap in pop-in animation: 90% scale -> 100% over 180ms with fade
+                text_with_anim = (
+                    f"{{\\fscx90\\fscy90\\fad(120,80)}}"
+                    f"{highlighted}"
+                    f"{{\\t(0,180,\\fscx100\\fscy100)}}"
+                )
+            elif is_ref:
                 # Highlight the LAST word of the line in cyan (the "punch word")
                 highlighted = _highlight_last_word_cyan(card_text)
+                text_with_anim = highlighted
             else:
                 highlighted = _highlight_text(card_text, highlight_words, accent)
+                text_with_anim = highlighted
             events.append(
-                f"Dialogue: 0,{format_ts_ass(s)},{format_ts_ass(e)},{main_style},,0,0,{main_margin_v},,{highlighted}"
+                f"Dialogue: 0,{format_ts_ass(s)},{format_ts_ass(e)},{main_style},,0,0,{main_margin_v},,{text_with_anim}"
             )
 
     if not events:
@@ -348,6 +401,59 @@ def _highlight_last_word_cyan(text: str) -> str:
         else:
             out.append(w.upper().replace("'", ""))
     return " ".join(out)
+
+
+def _highlight_creator(text: str, accent_color: str = CREATOR_HIGHLIGHT_COLOR) -> str:
+    """Creator-style highlight (Hormozi/Abdaal/MrBeast look):
+
+    - 1-3 short words per line
+    - WHITE bold text with thick black stroke
+    - EXACTLY ONE word per line is the IMPACT word — colored yellow
+      (#FFD400) or cyan (#00E5FF) and scaled 115% larger
+    - No background box; relies on a bottom gradient overlay for readability
+    - Pop-in animation: starts at 90% scale, eases to 100% over 180ms
+
+    Selection priority (exactly one word wins):
+      1. An Islamic sacred word (Allah, Quran, Jannah, ...) -> green
+      2. An Islamic warning word (hell, sin, ...) -> red
+      3. An emotion keyword (never, always, ...) -> yellow accent
+      4. The LAST word of the line -> yellow accent (default punch word)
+    """
+    words = text.split()
+    if not words:
+        return text
+    # Find exactly one impact word
+    chosen_idx = -1
+    chosen_color = accent_color
+    for i, w in enumerate(words):
+        islamic_color = _get_word_color(w)
+        if islamic_color:
+            chosen_idx = i
+            chosen_color = islamic_color
+            break  # sacred/warning wins, take the first one
+    if chosen_idx == -1:
+        # Look for an emotion keyword
+        for i, w in enumerate(words):
+            clean = w.lower().strip(".,!?;:'\"()[]{}")
+            if clean in EMOTION_KEYWORDS:
+                chosen_idx = i
+                break
+    if chosen_idx == -1:
+        # Default: last word of the line
+        chosen_idx = len(words) - 1
+    out = []
+    for i, w in enumerate(words):
+        base = w.upper().replace("'", "")
+        if i == chosen_idx:
+            out.append(f"{{\\fscx115\\fscy115}}{{\\c{chosen_color}}}{base}{{\\c}}{{\\fscx100\\fscy100}}")
+        else:
+            out.append(base)
+    return " ".join(out)
+
+
+def _pop_in_wrap(text: str) -> str:
+    """Wrap text in a smooth pop-in animation: scale 90% -> 100% over 180ms."""
+    return f"{{\\fscx90\\fscy90\\fad(120,80)\\t(0,180,\\fscx100\\fscy100)}}{text}{{\\fad}}"
 
 
 def write_ass(transcript: list, clip_start: float, clip_end: float, output_dir: str,

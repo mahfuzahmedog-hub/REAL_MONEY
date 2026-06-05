@@ -62,6 +62,12 @@ class PipelineStatus:
         self.max_clips: int = 3
         self.subtitle_style: str = "reference"
         self.source_is_vertical: bool = False
+        self.done: bool = False
+
+    def mark_done(self):
+        self.done = True
+        self.progress = 100
+        self.stage = "done"
 
     def to_dict(self):
         return {
@@ -76,7 +82,7 @@ class PipelineStatus:
             "max_clips": self.max_clips,
             "subtitle_style": self.subtitle_style,
             "source_is_vertical": self.source_is_vertical,
-            "done": self.progress == 100
+            "done": self.done
         }
 
 _statuses: dict[str, PipelineStatus] = {}
@@ -617,7 +623,7 @@ async def run_pipeline(
                 action_center = detect_action_center(section_path, sample_seconds=min(2.0, clip_duration / 2))
                 if action_center:
                     _log(f"    Action center: w={action_center['w']} h={action_center['h']} x={action_center['x']} y={action_center['y']}")
-                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center, source_is_vertical=s.source_is_vertical)
+                clipper.process_clip(section_path, ass_path, music_path, caption_hook, final_path, mood=clip_mood, brand_text=brand_text, punchline_reactions=reactions, action_center=action_center, source_is_vertical=s.source_is_vertical, subtitle_style=s.subtitle_style)
 
                 final_size = os.path.getsize(final_path) / (1024 * 1024)
                 _log(f"  Clip {i+1} done: {final_size:.1f} MB, mood={clip_mood}")
@@ -713,8 +719,7 @@ async def run_pipeline(
                     zf.write(metadata_path, arcname="metadata.json")
 
             s.download_path = str(zip_path)
-            s.progress = 100
-            s.stage = "done"
+            s.mark_done()
             _save_status(s)
             zip_size = os.path.getsize(zip_path) / (1024 * 1024)
             _log(f"Pipeline complete! ZIP: {zip_size:.1f} MB")

@@ -5,6 +5,12 @@ from ..config import FFMPEG
 from . import look
 from . import framing
 
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+FONTS_DIR = BACKEND_DIR / "assets" / "fonts"
+OVERLAYS_DIR = BACKEND_DIR / "assets" / "overlays"
+BOTTOM_GRADIENT_PNG = OVERLAYS_DIR / "bottom_gradient.png"
+
+
 def get_duration(video_path: str) -> float:
     from ..config import FFPROBE
     r = subprocess.run([
@@ -35,9 +41,26 @@ def get_probe(video_path: str) -> dict:
             pass
     return {"width": 1920, "height": 1080}
 
+
 def _escape_ass_path(ass_path: str) -> str:
     p = ass_path.replace("\\", "/").replace(":", "\\:")
-    return f"subtitles='{p}':original_size=1080x1920"
+    fontsdir = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
+    return f"subtitles='{p}':original_size=1080x1920:fontsdir='{fontsdir}'"
+
+
+def _build_bottom_gradient_overlay() -> str:
+    """Return an ffmpeg filter that overlays the static bottom-gradient PNG.
+
+    The PNG is 1080x1920 (full frame) with a cinematic vignette:
+    transparent at the top, ~92% black at the bottom. This darkens the
+    lower 75% of the frame just enough to make white Anton subtitles
+    readable on light/cream/white source footage (e.g. podiums, sky),
+    while leaving the subject's face untouched.
+    """
+    if not BOTTOM_GRADIENT_PNG.exists():
+        return ""
+    p = str(BOTTOM_GRADIENT_PNG).replace("\\", "/").replace(":", "\\:")
+    return f"movie='{p}'[bg];[v][bg]overlay=0:0[v]"
 
 
 def process_clip(
@@ -47,6 +70,7 @@ def process_clip(
     punchline_reactions: list | None = None,
     action_center: dict | None = None,
     source_is_vertical: bool = False,
+    subtitle_style: str = "default",
 ) -> str:
     probe = get_probe(video_path)
     duration = get_duration(video_path)
@@ -58,12 +82,12 @@ def process_clip(
         crop = framing.get_crop_filter(probe["width"], probe["height"], detected=action_center)
     grade = look.get_grade_filter(mood)
     zoom = look.build_zoom_filter(duration, punchline_reactions)
-    hook = look.build_hook_filter(caption_hook, mood)
-    watermark = look.build_brand_watermark_filter(brand_text, mood) if brand_text else ""
+    hook = look.build_hook_filter(caption_hook, mood, style=subtitle_style)
+    watermark = look.build_brand_watermark_filter(brand_text, mood, style=subtitle_style) if brand_text else ""
     sub_filter = _escape_ass_path(ass_path) if ass_path and Path(ass_path).exists() and Path(ass_path).stat().st_size > 0 else ""
     emojis = look.build_emoji_reaction_filter(punchline_reactions or [])
 
-    endcard = look.build_endcard_filter(brand_text, duration, mood)
+    endcard = look.build_endcard_filter(brand_text, duration, mood, style=subtitle_style)
     progress_bar = look.build_progress_bar_filter(duration)
     parts = [crop, grade, zoom, "unsharp=5:5:1.0:5:5:0.0"]
     if hook:
@@ -82,8 +106,24 @@ def process_clip(
 
     music_volume = "0.08" if mood in ("funny", "chill") else "0.12"
 
+    # Build filter_complex. The subtitle and gradient layers both write to [v].
+    # If we have a bottom gradient (for the creator style), we need to chain the
+    # gradient overlay AFTER the rest of the [v] pipeline. So:
+    #   1. Apply all main filters -> [v]
+    #   2. (creator only) Overlay bottom gradient on top of [v] -> [v]
+    use_gradient = (subtitle_style or "").lower() == "creator"
+
     cmd = [FFMPEG, "-y", "-threads", "2", "-i", video_path]
     filter_complex = f"[0:v]{vf}[v]"
+
+    if use_gradient and BOTTOM_GRADIENT_PNG.exists():
+        # Need the gradient as a 2nd input (movie filter doesn't need -i)
+        bg_path = str(BOTTOM_GRADIENT_PNG).replace("\\", "/").replace(":", "\\:")
+        filter_complex = (
+            f"movie='{bg_path}'[bg];"
+            f"[0:v]{vf}[base];"
+            f"[base][bg]overlay=0:0[v]"
+        )
 
     if music_path:
         cmd.extend(["-i", music_path])

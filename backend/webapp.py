@@ -129,7 +129,7 @@ async def process_video(req: ProcessRequest):
     brand_text = req.brand_text
     max_clips = max(1, min(10, int(req.max_clips or 3)))
     subtitle_style = (req.subtitle_style or "reference").lower()
-    if subtitle_style not in ("reference", "default"):
+    if subtitle_style not in ("reference", "default", "creator"):
         subtitle_style = "reference"
     asyncio.create_task(
         asyncio.to_thread(
