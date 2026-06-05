@@ -42,18 +42,214 @@ def port_in_use(port: int) -> bool:
             return False
 
 
-def kill_pid(pid: int) -> None:
-    try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/PID", str(pid)],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-        else:
+def kill_pid(pid: int) -> bool:
+    """Force-kill a process. Returns True if it was likely killed.
+
+    Uses ctypes TerminateProcess directly (synchronous, no shell, no
+    hang). taskkill on Win11 24H2+ hangs when killing zombie python.exe.
+    """
+    if sys.platform != "win32":
+        try:
             os.kill(pid, 15)
+        except Exception:
+            pass
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_TERMINATE = 0x0001
+        kernel32 = ctypes.windll.kernel32
+        OpenProcess = kernel32.OpenProcess
+        OpenProcess.restype = wintypes.HANDLE
+        OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        TerminateProcess = kernel32.TerminateProcess
+        TerminateProcess.restype = wintypes.BOOL
+        TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        CloseHandle = kernel32.CloseHandle
+        CloseHandle.restype = wintypes.BOOL
+        CloseHandle.argtypes = [wintypes.HANDLE]
+        h = OpenProcess(PROCESS_TERMINATE, False, pid)
+        if h:
+            ok = TerminateProcess(h, 1)
+            CloseHandle(h)
+            return bool(ok)
     except Exception:
         pass
+    return False
+
+
+def _process_parents(pid: int, max_depth: int = 4) -> set[int]:
+    """Return set of PIDs in the ancestor chain of `pid` (up to max_depth)."""
+    if sys.platform != "win32":
+        return set()
+    try:
+        import ctypes
+        from ctypes import wintypes
+        TH32CS_SNAPPROCESS = 0x00000002
+        kernel32 = ctypes.windll.kernel32
+        CreateToolhelp32Snapshot = kernel32.CreateToolhelp32Snapshot
+        CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        Process32FirstW = kernel32.Process32FirstW
+        Process32FirstW.restype = wintypes.BOOL
+        Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        Process32NextW = kernel32.Process32NextW
+        Process32NextW.restype = wintypes.BOOL
+        Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        CloseHandle = kernel32.CloseHandle
+        CloseHandle.restype = wintypes.BOOL
+        CloseHandle.argtypes = [wintypes.HANDLE]
+
+        # PROCESSENTRY32 layout
+        class PE32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
+        snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap == wintypes.HANDLE(-1).value:
+            return set()
+        parent_of = {}
+        pe = PE32()
+        pe.dwSize = ctypes.sizeof(PE32)
+        if not Process32FirstW(snap, ctypes.byref(pe)):
+            CloseHandle(snap)
+            return set()
+        while True:
+            parent_of[pe.th32ProcessID] = pe.th32ParentProcessID
+            if not Process32NextW(snap, ctypes.byref(pe)):
+                break
+        CloseHandle(snap)
+        # Walk up from pid
+        result = {pid}
+        cur = pid
+        for _ in range(max_depth):
+            parent = parent_of.get(cur)
+            if not parent or parent in result:
+                break
+            result.add(parent)
+            cur = parent
+        return result
+    except Exception:
+        return set()
+
+
+def kill_orphans(debug: bool = False) -> int:
+    """Kill any stale python.exe that look like ours (REAL_MONEY backend).
+
+    Past shell teardowns can leave orphan webapp processes eating RAM.
+    Strategy: use ctypes + PSAPI (always available, fast) to enumerate
+    python.exe processes, then check the executable path via the
+    ProcessImageFileName Win32 call. Much smaller surface than wmic /
+    PowerShell WMI (both slow / deprecated on Win11 24H2+).
+    """
+    if sys.platform != "win32":
+        return 0
+    if debug:
+        print(f"  [kill_orphans] platform=win32", flush=True)
+    try:
+        import ctypes
+        from ctypes import wintypes
+        my_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+        my_pid_os = os.getpid()
+        if debug:
+            print(f"  [kill_orphans] my_pid={my_pid} os.getpid={my_pid_os}", flush=True)
+    except Exception as e:
+        if debug:
+            print(f"  [kill_orphans] ctypes import failed: {e}", flush=True)
+        return 0
+
+    psapi = ctypes.windll.psapi
+    kernel32 = ctypes.windll.kernel32
+    EnumProcesses = psapi.EnumProcesses
+    EnumProcesses.restype = wintypes.BOOL
+    EnumProcesses.argtypes = [
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    GetProcessImageFileNameW = psapi.GetProcessImageFileNameW
+    GetProcessImageFileNameW.restype = wintypes.DWORD
+    GetProcessImageFileNameW.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_wchar_p,
+        wintypes.DWORD,
+    ]
+    QueryFullProcessImageNameW = kernel32.QueryFullProcessImageNameW
+    QueryFullProcessImageNameW.restype = wintypes.BOOL
+    QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.c_wchar_p,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    OpenProcess = kernel32.OpenProcess
+    OpenProcess.restype = wintypes.HANDLE
+    OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.restype = wintypes.BOOL
+    CloseHandle.argtypes = [wintypes.HANDLE]
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+    pids = (wintypes.DWORD * 4096)()
+    cb = wintypes.DWORD()
+    if not EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(cb)):
+        if debug:
+            print(f"  [kill_orphans] EnumProcesses failed", flush=True)
+        return 0
+    count = cb.value // ctypes.sizeof(wintypes.DWORD)
+    if debug:
+        print(f"  [kill_orphans] scanning {count} processes", flush=True)
+    # Skip ourselves + all our ancestors (in case PIDs are wrapped/mismatched)
+    protected_pids = _process_parents(my_pid) | {my_pid}
+    if debug:
+        print(f"  [kill_orphans] protected={protected_pids}", flush=True)
+    # Strict marker: anything launched from this backend dir
+    backend_lower = str(BACKEND_DIR).lower()
+    killed = 0
+    for i in range(count):
+        pid = pids[i]
+        if not pid or pid in protected_pids:
+            continue
+        h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            sz = wintypes.DWORD(512)
+            if QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(sz)):
+                path = buf.value
+            else:
+                # Fallback: device path like \Device\HarddiskVolume3\...
+                buf2 = ctypes.create_unicode_buffer(512)
+                if GetProcessImageFileNameW(h, buf2, 512):
+                    path = buf2.value
+                else:
+                    path = ""
+            if not path:
+                continue
+            # Real python.exe is something like "...\python.exe" — filter
+            if not path.lower().endswith("python.exe"):
+                continue
+            # Strict filter: must be our venv
+            if backend_lower in path.lower():
+                if debug:
+                    print(f"  [kill_orphans] ORPHAN: {pid} {path}", flush=True)
+                if kill_pid(pid):
+                    killed += 1
+        finally:
+            CloseHandle(h)
+    if debug:
+        print(f"  [kill_orphans] done, killed {killed}", flush=True)
+    return killed
 
 
 def read_pid() -> int | None:
@@ -77,6 +273,12 @@ def wait_for_health(timeout: int = 20) -> bool:
 
 
 def start() -> None:
+    print("[start.py] Cleaning up orphan python processes from previous starts...")
+    n = kill_orphans()
+    if n:
+        print(f"[start.py] Killed {n} orphan process(es).")
+        time.sleep(0.5)
+
     existing = read_pid()
     if existing is not None:
         if port_in_use(UI_PORT):
