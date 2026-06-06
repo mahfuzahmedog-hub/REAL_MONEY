@@ -27,10 +27,10 @@ def check_duration(url: str) -> float:
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp duration check failed: {result.stderr[:300]}")
     duration = float(result.stdout.strip() or 0)
-    if duration > 6000:
+    if duration > 10800:
         raise ValueError(
             f"Video too long ({duration/60:.0f} min). "
-            f"Maximum 100 minutes (6,000s). "
+            f"Maximum 180 minutes (10,800s / 3 hours). "
             f"For longer videos, trim to the best section first."
         )
     return duration
