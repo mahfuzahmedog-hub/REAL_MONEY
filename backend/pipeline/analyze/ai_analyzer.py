@@ -595,10 +595,17 @@ HOOK TEXT RULES
 ==================================================
 
 HARD RULES:
-- Maximum 8 words
+- Maximum word count by SUBTITLE_STYLE (set in user message):
+  - creator: 3-4 words (Anton 130px HookCard, fits 1080px frame on 2 lines)
+  - reference: 5-6 words (Arial Black 150px, MarginV 520)
+  - default: 6-8 words (Arial Black 130px, MarginV 180)
+  Hooks exceeding the style cap are REJECTED at post-processing.
 - Must create open loop or unresolved reflection
 - Must work without sound (text on screen only)
 - Never reference events you cannot verify from transcript
+- NEVER write hooks in Latin transliteration of Arabic (e.g. "Rabbanaghfir lana", "Bismillah ir-Rahman", "SubhanAllah")
+  — these are LLM fabrications and will be rejected. Use clean English with English-Arabic names instead
+  (e.g. "Forgive me, oh Allah", "In the name of Allah", "Glory be to Allah")
 - NEVER use these phrases (Islamic content is serious, not clickbait):
   "wait for it", "watch till the end", "this is crazy", "mind blown",
   "subscribe", "like and subscribe", "like if you agree", "follow for more",
@@ -896,8 +903,18 @@ def _enforce_title_pattern(title: str, scholar_name: str = "", pillar: str = "")
     return title
 
 
-def _enforce_hook(hook: str) -> str:
-    """Enforce hook rules: max 8 words, no banned phrases, strip quotes."""
+def _enforce_hook(hook: str, subtitle_style: str = "default") -> str:
+    """Enforce hook rules: max words by style, no banned phrases, no fabricated Arabic.
+
+    Hook length cap by subtitle style:
+      - creator (Anton 130px HookCard, 1080px frame): max 4 words
+      - reference (Arial Black 150px, MarginV 520): max 6 words
+      - default (Arial Black 130px, MarginV 180): max 8 words
+
+    Also rejects hooks that look like Latin transliteration of Arabic
+    (e.g. "Rabbanaghfir lana", "Bismillah ir-Rahman") — these are LLM
+    fabrications that bypass the Arabic-character detector.
+    """
     if not hook:
         return ""
     hook = hook.strip().strip('"').strip("'")
@@ -911,9 +928,18 @@ def _enforce_hook(hook: str) -> str:
     for b in banned_hooks:
         if b in hook_lower:
             return ""
+    try:
+        from ..verify.theology import verify_hook_text
+        hook_check = verify_hook_text(hook)
+        if hook_check["verdict"] != "ok":
+            return ""
+    except Exception:
+        pass
+    style = (subtitle_style or "default").lower()
+    max_words = {"creator": 4, "reference": 6, "default": 8}.get(style, 8)
     words = hook.split()
-    if len(words) > 8:
-        hook = " ".join(words[:8])
+    if len(words) > max_words:
+        hook = " ".join(words[:max_words])
     return hook
 
 
@@ -972,7 +998,7 @@ def _enforce_tags(tags: list, pillar: str = "", scholar_name: str = "", all_clip
     return out[:11]
 
 
-def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False, scholar_name: str = "") -> dict:
+def generate_metadata_agent2(transcript: list, clips: list, duration: float, niche: str = "general", fallback_mode: bool = False, scholar_name: str = "", subtitle_style: str = "default") -> dict:
     from ..download.transcriber import filter_segments
     from ..download import market
     transcript_text = filter_segments(transcript, max_chars=6000)
@@ -990,6 +1016,8 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
     user_message = (
         f"NICHE: {niche}\nFALLBACK_MODE: {str(fallback_mode).lower()}\n"
         f"SCHOLAR_NAME: {scholar_name or '(none detected — use pillar as suffix)'}\n"
+        f"SUBTITLE_STYLE: {subtitle_style} (hook word cap: "
+        f"{'3-4' if subtitle_style == 'creator' else '5-6' if subtitle_style == 'reference' else '6-8'} words)\n"
         f"CLIPS: {json.dumps(clips)}{market_block}\n\nTRANSCRIPT:\n{transcript_text}"
     )
 
@@ -1027,7 +1055,7 @@ def generate_metadata_agent2(transcript: list, clips: list, duration: float, nic
         clip_scholar = c.get("scholar_name", "") or scholar_name
 
         title = _enforce_title_pattern(title, clip_scholar, pillar)
-        hook_text = _enforce_hook(hook_text)
+        hook_text = _enforce_hook(hook_text, subtitle_style=subtitle_style)
         tags = _enforce_tags(tags, pillar, clip_scholar, all_clips=normalized)
 
         normalized.append({

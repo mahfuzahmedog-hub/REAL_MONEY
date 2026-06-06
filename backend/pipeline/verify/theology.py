@@ -82,6 +82,51 @@ BANNED_PATTERNS = [
 ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
 
 
+ARABIC_TRANSLIT_PATTERNS = [
+    (r"\brabba[nu]?[ah]?\b", "rabbana (our lord) — dua opener"),
+    (r"\ballahumma[ah]?\b", "allahumma (O Allah) — dua opener"),
+    (r"\bbismillah[ai]?\b", "bismillah — Quran/surah opener"),
+    (r"\bsubhan[au]ll?ah\b", "subhanallah — dhikr"),
+    (r"\balhamd[au]?l?l?illah\b", "alhamdulillah — dhikr"),
+    (r"\b(?:la\s+)?ilaha?\s+illa\s+allah\b", "shahada"),
+    (r"\ballahu\s+akbar\b", "takbir"),
+    (r"\bastagh?firullah\b", "astaghfirullah — forgiveness"),
+    (r"\b(?:sall[ae]llahu|salla\s+llahu)\b", "sallallahu — blessing on prophet"),
+    (r"\b(?:alayh[ai]|alayhi)\s+(?:sallam|assalam)\b", "alayhi salam"),
+    (r"\b(?:inn?a|innaha|innahu)\b", "inna/innahu — Quran particle"),
+    (r"\bfabi?ayyi?\b", "fabi ayyi — Quran phrase"),
+    (r"\by[ao]\s+allah\b", "ya Allah — invocation"),
+    (r"\bwall?[ao]hu\b", "wallahi — oath"),
+    (r"\bbill?[ao]hi\b", "billah — oath"),
+    (r"\bmash[ao]allah\b", "mashallah — phrase"),
+    (r"\binsh[ao]allah\b", "inshallah — phrase"),
+    (r"\bjaz[ao]k[ao]llahu\b", "jazakallah — thanks"),
+    (r"\b(?:qul|ya|wa|li|fi|min|ila|ala|amma)\s+[a-z]+\b", "common Arabic particle + word pattern"),
+    (r"\b(?:quran|qur'an|surah|ayah|ayat|hadith|sunnah|sahih|haram|halal)\b", "Arabic Islamic term"),
+]
+
+
+def _looks_like_transliterated_arabic(text: str) -> tuple[bool, list[str]]:
+    """Detect Latin-script transliterations of Arabic phrases.
+    Returns (is_transliteration, list_of_matched_descriptions).
+    Used to catch LLM-fabricated Arabic that doesn't reach the Arabic-char detector.
+    """
+    if not text:
+        return False, []
+    text_lower = text.lower()
+    matches = []
+    for pattern, desc in ARABIC_TRANSLIT_PATTERNS:
+        if re.search(pattern, text_lower):
+            matches.append(desc)
+    if re.search(r"\b[a-z]+-[a-z]+(?:-[a-z]+)*\b", text_lower):
+        hyphen_words = re.findall(r"\b[a-z]+-[a-z]+(?:-[a-z]+)*\b", text_lower)
+        if any(len(w.split("-")) >= 2 for w in hyphen_words):
+            matches.append("hyphenated transliteration pattern (e.g. Bismillah-ir-Rahman)")
+    if text_lower.startswith(("rabba", "allahumma", "bismillah", "alhamd", "subhan", "astagh", "salla", "inna", "ya ", "wa ")):
+        matches.append("Arabic-style opening word")
+    return len(matches) >= 1, matches
+
+
 def _has_arabic(text: str) -> bool:
     return bool(text) and bool(ARABIC_CHAR_RE.search(text))
 
@@ -299,6 +344,26 @@ def check_banned_patterns(text: str) -> list[str]:
     return reasons
 
 
+def verify_hook_text(hook_text: str) -> dict:
+    """Verify hook_text for LLM-fabricated Arabic transliteration.
+    Returns dict with:
+      has_transliteration: bool
+      transliteration_matches: list[str]  (descriptions of patterns matched)
+      looks_like_dua_shape: bool  (starts with Rabba-/Allahumma- opener)
+      verdict: "ok" | "needs_manual_review" | "reject"
+    """
+    if not hook_text:
+        return {"has_transliteration": False, "transliteration_matches": [], "looks_like_dua_shape": False, "verdict": "ok"}
+    is_translit, matches = _looks_like_transliterated_arabic(hook_text)
+    opener_match = re.search(r"^(rabba[nu]?[ah]?|allahumma[ah]?|bismillah[ai]?|alhamd[au]?l?l?illah|subhan[au]ll?ah|astagh?firullah|sall[ae]llahu)", hook_text.lower().strip())
+    return {
+        "has_transliteration": is_translit,
+        "transliteration_matches": matches,
+        "looks_like_dua_shape": bool(opener_match),
+        "verdict": "needs_manual_review" if (is_translit or bool(opener_match)) else "ok",
+    }
+
+
 def verify_extracted_arabic(arabic_text: str) -> dict:
     """Verify any extracted Arabic text against Quran and Hadith DBs.
     Returns a dict with verification status and matching references.
@@ -368,6 +433,15 @@ def verify_clip(
     banned_reasons = check_banned_patterns(hook_text + " " + title)
     if banned_reasons:
         v.reasons.extend(banned_reasons)
+        v.passed = False
+        v.needs_manual_review = True
+
+    hook_check = verify_hook_text(hook_text)
+    if hook_check["verdict"] != "ok":
+        v.reasons.append(
+            f"Hook contains transliterated Arabic: {', '.join(hook_check['transliteration_matches'][:3])}. "
+            "LLM may have fabricated Arabic — must be verified against Quran/Hadith DB before posting."
+        )
         v.passed = False
         v.needs_manual_review = True
 

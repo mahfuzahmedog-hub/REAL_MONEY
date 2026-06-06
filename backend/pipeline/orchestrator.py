@@ -395,6 +395,7 @@ async def run_pipeline(
             agent2_result = ai_analyzer.generate_metadata_agent2(
                 transcript, simple_clips, duration, niche, fallback_mode,
                 scholar_name=detected_scholar,
+                subtitle_style=getattr(s, "subtitle_style", "default"),
             )
             clips_meta = agent2_result.get("clips", [])
             _log(f"Agent 2 generated metadata for {len(clips_meta)} clips (fallback_mode={fallback_mode})")
