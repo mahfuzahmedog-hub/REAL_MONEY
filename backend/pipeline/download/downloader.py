@@ -30,7 +30,7 @@ def check_duration(url: str) -> float:
     if duration > 6000:
         raise ValueError(
             f"Video too long ({duration/60:.0f} min). "
-            f"Maximum 30 minutes. "
+            f"Maximum 100 minutes (6,000s). "
             f"For longer videos, trim to the best section first."
         )
     return duration
