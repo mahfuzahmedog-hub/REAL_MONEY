@@ -75,10 +75,11 @@ def process_clip(
 ) -> str:
     probe = get_probe(video_path)
     duration = get_duration(video_path)
+    TARGET_DURATION = 25.0
     if clip_duration is not None and clip_duration > 0:
-        encode_duration = min(clip_duration, duration)
+        encode_duration = min(TARGET_DURATION, clip_duration, duration)
     else:
-        encode_duration = duration
+        encode_duration = min(TARGET_DURATION, duration)
     # If source is already 9:16 vertical, skip the smart-crop and just scale.
     # Preserves quality (no re-encoding crop) and respects the original framing.
     if source_is_vertical or (probe["height"] > probe["width"] and probe["width"] >= 540):
@@ -94,7 +95,7 @@ def process_clip(
 
     endcard = look.build_endcard_filter(brand_text, encode_duration, mood, style=subtitle_style)
     progress_bar = look.build_progress_bar_filter(encode_duration)
-    parts = [crop, grade, zoom, "unsharp=5:5:1.0:5:5:0.0"]
+    parts = [crop, grade, zoom, "unsharp=5:5:1.0:5:5:0.0", f"trim=0:{encode_duration:.3f},setpts=PTS-STARTPTS"]
     if hook:
         parts.append(hook)
     if watermark:

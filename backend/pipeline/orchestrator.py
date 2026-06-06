@@ -513,6 +513,7 @@ async def run_pipeline(
                 caption_hook = caption_hook_lookup.get(clip_id, "")
 
                 MIN_CLIP_SEC = 25
+                MAX_CLIP_SEC = 30
                 clip_start = max(0, clip["start"])
                 clip_end = min(clip["end"], duration)
                 clip_duration = clip_end - clip_start
@@ -522,13 +523,11 @@ async def run_pipeline(
                     clip_start = max(0, clip_start - pad)
                     clip_end = min(duration, clip_end + pad)
                     clip_duration = clip_end - clip_start
-                if clip_duration > 60:
-                    # YouTube Shorts / TikTok / Instagram Reels max is 60s.
-                    # Center-crop to the most engaging middle 60s.
-                    excess = clip_duration - 60
+                if clip_duration > MAX_CLIP_SEC:
+                    excess = clip_duration - MAX_CLIP_SEC
                     clip_start += excess / 2
-                    clip_end = clip_start + 60
-                    clip_duration = 60
+                    clip_end = clip_start + MAX_CLIP_SEC
+                    clip_duration = MAX_CLIP_SEC
                 if clip_duration < MIN_CLIP_SEC:
                     _log(f"  Skip clip {i+1}: too short ({clip_duration:.0f}s)")
                     return None
