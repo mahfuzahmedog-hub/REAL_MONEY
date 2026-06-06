@@ -33,6 +33,120 @@ UI_PORT = int(os.getenv("UI_PORT", "7860"))
 
 _heavy_lock = asyncio.Lock()
 _heavy_loaded = False
+
+
+def kill_orphan_subprocesses() -> dict:
+    """Kill any orphan ffmpeg / yt-dlp / deno / python child processes that
+    were spawned by previous (now-cancelled or crashed) pipeline runs.
+
+    Past runs that crashed, were killed at the bash-tool level, or
+    closed consoles on Win11 24H2+ can leave ffmpeg.exe / yt-dlp.exe /
+    deno.exe / faster-whisper's ctranslate2 children still running,
+    hogging CPU and blocking the GPU/audio device. We need to kill
+    them before a new pipeline can start cleanly.
+
+    Returns dict with counts by reason: {ffmpeg: N, yt_dlp: N, ...}
+    Safe to call on non-Windows (returns empty dict).
+    """
+    if sys.platform != "win32":
+        return {}
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return {}
+
+    kernel32 = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+
+    EnumProcesses = psapi.EnumProcesses
+    EnumProcesses.restype = wintypes.BOOL
+    EnumProcesses.argtypes = [
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    QueryFullProcessImageNameW = kernel32.QueryFullProcessImageNameW
+    QueryFullProcessImageNameW.restype = wintypes.BOOL
+    QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, ctypes.c_wchar_p, ctypes.POINTER(wintypes.DWORD),
+    ]
+    OpenProcess = kernel32.OpenProcess
+    OpenProcess.restype = wintypes.HANDLE
+    OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.restype = wintypes.BOOL
+    CloseHandle.argtypes = [wintypes.HANDLE]
+    TerminateProcess = kernel32.TerminateProcess
+    TerminateProcess.restype = wintypes.BOOL
+    TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    PROCESS_TERMINATE = 0x0001
+
+    my_pid = kernel32.GetCurrentProcessId()
+
+    targets = (
+        "ffmpeg.exe", "yt-dlp.exe", "yt-dlp_farm.exe", "deno.exe",
+        "node.exe",
+    )
+    killed = {}
+
+    pids = (wintypes.DWORD * 4096)()
+    cb = wintypes.DWORD()
+    if not EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(cb)):
+        return {}
+    count = cb.value // ctypes.sizeof(wintypes.DWORD)
+
+    for i in range(count):
+        pid = pids[i]
+        if not pid or pid == my_pid:
+            continue
+        h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            sz = wintypes.DWORD(512)
+            if not QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(sz)):
+                continue
+            exe_name = Path(buf.value).name.lower()
+            if exe_name not in targets:
+                continue
+            ht = OpenProcess(PROCESS_TERMINATE, False, pid)
+            if not ht:
+                continue
+            try:
+                if TerminateProcess(ht, 1):
+                    killed[exe_name] = killed.get(exe_name, 0) + 1
+            finally:
+                CloseHandle(ht)
+        finally:
+            CloseHandle(h)
+    if killed:
+        logging.getLogger("webapp").info(f"[orphan-killer] killed {killed}")
+    return killed
+
+
+def cancel_in_progress_jobs() -> int:
+    """Cancel any in-progress pipeline jobs in this webapp process.
+    Sets their cancelled flag so the next iteration of the pipeline loop
+    will exit. Returns count of jobs cancelled.
+    """
+    try:
+        from pipeline.orchestrator import _statuses, cancel_job
+    except Exception:
+        return 0
+    n = 0
+    for jid, s in list(_statuses.items()):
+        if s.done or s.cancelled:
+            continue
+        try:
+            if cancel_job(jid):
+                n += 1
+        except Exception:
+            pass
+    return n
 _run_pipeline = None
 _get_status = None
 _get_clip_path = None
@@ -122,6 +236,14 @@ async def process_video(req: ProcessRequest):
     await _ensure_heavy()
     if not req.url or not req.url.strip():
         raise HTTPException(400, "URL is required")
+    cancelled = cancel_in_progress_jobs()
+    if cancelled:
+        logging.getLogger("webapp").info(f"[process] cancelled {cancelled} in-progress job(s) before starting new one")
+    killed = kill_orphan_subprocesses()
+    if killed:
+        logging.getLogger("webapp").info(f"[process] killed orphan subprocesses: {killed}")
+    if cancelled or killed:
+        await asyncio.sleep(0.8)
     job_id = uuid.uuid4().hex[:12]
     url = req.url.strip()
     niche = req.niche
@@ -136,7 +258,7 @@ async def process_video(req: ProcessRequest):
             _run_pipeline_in_thread, url, job_id, niche, quick_mode, brand_text, max_clips, subtitle_style
         )
     )
-    return {"job_id": job_id}
+    return {"job_id": job_id, "cancelled_previous": cancelled, "killed_orphans": killed}
 
 
 def _run_pipeline_in_thread(
